@@ -43,6 +43,17 @@ jobs:
             rm -rf "$scratch"
           }
           trap cleanup EXIT
+          check_architectures() {
+            executable_path=$1
+            shift
+            available=$(lipo -archs "$executable_path")
+            for architecture in "$@"; do
+              case " $available " in
+                *" $architecture "*) ;;
+                *) echo "Expected $architecture in $available" >&2; return 1 ;;
+              esac
+            done
+          }
           smoke_start() {
             "$@" > "$scratch/smoke.log" 2>&1 &
             smoke_pid=$!
@@ -68,7 +79,7 @@ jobs:
           app="$extracted/宇伴.app"
           codesign --verify --deep --strict "$app"
           executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/$executable"
+          check_architectures "$app/Contents/MacOS/$executable" arm64 x86_64
           smoke_start "$app/Contents/MacOS/$executable"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
