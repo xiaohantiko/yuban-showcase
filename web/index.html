@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f9f7f8">
+  <meta name="description" content="宇伴：QQ AI 陪伴中转站。管理连接、语音和主动问候。">
+  <title>宇伴 · QQ AI 陪伴中转站</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/model-catalog.js"></script>
+  <script defer src="/dsh-portable.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-2-15-4 18"/></symbol>
+    <symbol id="i-usage" viewBox="0 0 24 24"><path d="M4 4v16h16M9 16v-4m5 4V9m5 7V5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 4.2 2.8 7.7 8 10 5.2-2.3 8-5.8 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 8.3-6.9a1 1 0 0 1 1.4 0L21 10v9a2 2 0 0 1-2 2h-4v-5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v5H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.4a8.6 8.6 0 0 1-8.9 8.2 11 11 0 0 1-2.1-.2L5 21l.8-3.5A7.8 7.8 0 0 1 3 11.4a8.6 8.6 0 0 1 8.8-8.2 8.5 8.5 0 0 1 8.7 8.2Z"/><path d="M8.5 11.4h.01m3.3 0h.01m3.3 0h.01" stroke-width="2.7"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="5" rx="1"/><path d="M8 12h8m-8 4h5"/></symbol>
+    <symbol id="i-qq" viewBox="0 0 24 24"><path d="M12 2.9c-4.2 0-7 4.1-7 9.7L3.4 16c-.8 1.8.7 2.7 2 2.1l.9-.5c-.3 1 .1 1.7 1 2 .6.3 2.5.6 4.7.6s4.1-.3 4.7-.6c.9-.3 1.3-1 1-2l.9.5c1.3.6 2.8-.3 2-2.1L19 12.6c0-5.6-2.8-9.7-7-9.7Z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 4H6a2 2 0 0 0-2 2v10"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.3"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19.8 5.4a4.8 4.8 0 0 0-6.8 0L12 6.5l-1.1-1.1a4.8 4.8 0 0 0-6.8 6.8L12 20l7.8-7.8a4.8 4.8 0 0 0 0-6.8Z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8m-8 4h8m-8 4h4"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 10v4m4-7v10m5-14v18m5-14v10m4-7v4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.6 14.6A8.7 8.7 0 0 1 9.4 3.4a8.7 8.7 0 1 0 11.2 11.2Z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5m5 0a8 8 0 1 0-2.4 5.7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+  <aside class="sidebar">
+    <a class="brand" href="#overview">
+      <span class="brand-portrait"><span class="public-brand-mark" aria-hidden="true">宇</span></span>
+      <span><strong>宇伴</strong><small>QQ AI 陪伴中转站</small></span>
+    </a>
+    <nav aria-label="控制台导航">
+      <a href="/admin" id="admin-nav" data-route="admin" hidden><svg><use href="#i-shield"/></svg>管理后台</a>
+      <a href="#overview" data-route="overview" aria-current="page"><svg><use href="#i-home"/></svg>开始使用</a>
+      <a href="#persona" data-route="persona"><svg><use href="#i-heart"/></svg>人设与记忆</a>
+      <a href="#greetings" data-route="greetings"><svg><use href="#i-chat"/></svg>主动问候</a>
+      <a href="#usage" data-route="usage"><svg><use href="#i-usage"/></svg>用量看板</a>
+      <a href="#ai" data-route="ai"><svg><use href="#i-code"/></svg>高级接入</a>
+      <a href="#help" data-route="help"><svg><use href="#i-book"/></svg>使用说明</a>
+      <a href="#feedback" id="member-feedback-nav" data-route="feedback" hidden><svg><use href="#i-clipboard"/></svg>问题反馈</a>
+    </nav>
+    <footer><span class="dot"></span><span id="sidebar-status">控制台</span><span class="version">v0.1</span></footer>
+  </aside>
+
+  <main class="main">
+    <header class="topbar"><div><span>工作台</span><i>/</i><strong id="breadcrumb">开始使用</strong></div><div class="topbar-tools"><span class="environment" id="environment"><span class="dot"></span>初版预览</span><span class="active-account" id="active-account" hidden></span><span class="badge neutral account-role" id="account-role" hidden>管理员</span><button class="button subtle" id="logout" type="button" hidden>退出登录</button></div></header>
+    <section class="page subpage" id="admin" aria-labelledby="admin-title" hidden>
+      <div class="page-intro usage-intro">
+        <h1 id="admin-title">管理后台</h1>
+        <button class="button subtle" id="admin-refresh" type="button"><svg aria-hidden="true"><use href="#i-refresh"/></svg>刷新</button>
+      </div>
+      <p class="usage-status" id="admin-status" role="status">正在读取管理状态…</p>
+      <dl class="card admin-summary" id="admin-summary" hidden>
+        <div><dt>注册人机验证</dt><dd><span class="badge neutral" id="admin-verification"></span></dd></div>
+        <div><dt>成员账号</dt><dd><strong id="admin-members"></strong><span id="admin-disabled-count"></span><span id="admin-account-limit"></span></dd></div>
+        <div><dt>原 QQ 机器人</dt><dd><span class="badge neutral" id="admin-qq-status"></span><a class="link" href="#overview-qq">查看 QQ 设置 <svg aria-hidden="true"><use href="#i-chevron"/></svg></a></dd></div>
+      </dl>
+      <section class="card admin-panel" id="admin-users-panel" aria-labelledby="admin-users-title" hidden>
+        <h2 id="admin-users-title">用户管理</h2>
+        <p class="usage-status" id="admin-users-status" role="status">正在读取账号列表…</p>
+        <ul class="admin-items" id="admin-users-list"></ul>
+      </section>
+      <section class="card admin-panel" id="admin-feedback-panel" aria-labelledby="admin-feedback-title" hidden>
+        <div class="card-title"><h2 id="admin-feedback-title">问题反馈</h2><span class="admin-feedback-total" id="admin-feedback-total" hidden></span></div>
+        <p class="usage-status" id="admin-feedback-status" role="status">正在读取反馈…</p>
+        <ul class="admin-items" id="admin-feedback-list"></ul>
+        <div class="admin-feedback-pages" id="admin-feedback-pages" hidden>
+          <span id="admin-feedback-range"></span>
+          <button class="button subtle" id="admin-feedback-prev" type="button">上一页</button>
+          <button class="button subtle" id="admin-feedback-next" type="button">下一页</button>
+        </div>
+      </section>
+    </section>
+
+    <section class="page" id="overview">
+      <div class="hero">
+        <div class="hero-copy"><span class="eyebrow"><svg><use href="#i-qq"/></svg> QQ AI 陪伴中转站</span><h1>把陪伴，留在 QQ 里。</h1><p>连上云端、选一个 AI，再接入 QQ 机器人。用你的 QQ 完成一次认领，就能开始聊。</p></div>
+        <div class="hero-art" aria-hidden="true"><span class="orbit"></span><span class="star star-one">✦</span><span class="star star-two">✧</span><span class="star star-three">✦</span><span class="hero-portrait"><span class="public-brand-mark" aria-hidden="true">宇</span></span></div>
+      </div>
+      <section class="section" aria-labelledby="connect-title">
+        <div class="section-title"><h2 id="connect-title">三步开始</h2><a class="link" href="#help">第一次用？看说明 <svg><use href="#i-chevron"/></svg></a></div>
+        <div class="setup-list">
+          <details class="card setup-step" id="step-cloud" open>
+            <summary><span class="step-number">1</span><span class="step-label"><strong>连接云端</strong><small>填入部署后拿到的宇伴网址</small></span><span class="badge neutral" id="step-cloud-status">还未连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <div class="step-body"><p id="setup-cloud-note">你现在可以离线试用。想在 QQ 里使用，需要先连接云端。</p><div class="setup-actions"><button type="button" class="button primary" id="setup-connect" hidden>连接云端</button><a class="link" href="#help">我还没有云端网址</a></div></div>
+          </details>
+          <details class="card setup-step" id="step-model">
+            <summary><span class="step-number">2</span><span class="step-label"><strong>选一个 AI</strong><small>选择服务商，填入它的 API 密钥</small></span><span class="badge neutral" id="step-model-status">待连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <div class="step-body"><p id="setup-model-note">连接云端后可以在这里验证并保存模型。</p>
+              <form class="setup-form" id="setup-model-form" autocomplete="off">
+                <fieldset id="setup-model-fields" disabled>
+                  <label for="setup-provider">AI 服务商</label><select id="setup-provider" required></select>
+                  <label for="setup-preset-model" id="setup-preset-label" hidden>模型</label><select id="setup-preset-model" hidden disabled></select>
+                  <div id="setup-custom-model" class="setup-custom" hidden><label for="setup-base">接口地址</label><input id="setup-base" type="url" placeholder="https://example.com/v1"><label for="setup-model-id">模型 ID</label><input id="setup-model-id" type="text" maxlength="160" placeholder="服务商提供的模型名称"><small>自定义地址需先由部署者在云端允许。</small></div>
+                  <label for="setup-model-key">API 密钥</label><input id="setup-model-key" type="password" required maxlength="1024" placeholder="粘贴服务商提供的密钥" spellcheck="false" autocomplete="off">
+                  <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noreferrer">去服务商查看密钥说明</a></div>
+                </fieldset>
+              </form>
+              <p class="setup-feedback" id="setup-model-feedback" aria-live="polite"></p>
+              <details class="ai-example">
+                <summary>语音回复怎么接入</summary>
+                <p id="setup-provider-voice" aria-live="polite"></p>
+                <a id="setup-provider-voice-docs" class="link guide-link" target="_blank" rel="noreferrer" hidden>查看官方语音文档</a>
+                <p>由部署者在云端配置语音接口、密钥、模型和音色。配置好后，在 QQ 私聊发送「用语音回复：给我讲个故事」，或在「主动问候」里开启「默认语音回复」。</p>
+              </details>
+            </div>
+          </details>
+          <details class="card setup-step" id="step-qq">
+            <summary><span class="step-number">3</span><span class="step-label"><strong>连接 QQ</strong><small>填机器人资料，再用你的 QQ 认领</small></span><span class="badge neutral" id="qq-status">待连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <div class="step-body"><p id="setup-qq-note">在 QQ 开放平台创建机器人后，复制它的 AppID 和 ClientSecret。</p>
+              <form class="setup-form" id="setup-qq-form" autocomplete="off">
+                <fieldset id="setup-qq-fields" disabled>
+                  <label for="setup-qq-id">机器人 AppID</label><input id="setup-qq-id" type="text" required maxlength="32" inputmode="numeric" placeholder="机器人资料里的一串数字">
+                  <label for="setup-qq-secret">机器人 ClientSecret</label><input id="setup-qq-secret" type="password" required maxlength="256" placeholder="从 QQ 开放平台复制" spellcheck="false" autocomplete="off">
+                  <div class="setup-actions"><button class="button primary" type="submit">验证并保存 QQ</button><a class="link" href="https://q.qq.com/" target="_blank" rel="noreferrer">打开 QQ 开放平台 <svg><use href="#i-chevron"/></svg></a></div>
+                </fieldset>
+              </form>
+              <p class="setup-feedback" id="setup-qq-feedback" aria-live="polite"></p>
+              <div class="setup-callback" id="setup-callback" hidden><h3>把回调地址填到 QQ</h3><div class="webhook"><code id="qq-url">连接云端后显示</code><button class="button subtle" id="copy-webhook" type="button" disabled><svg><use href="#i-copy"/></svg>复制地址</button></div><p id="qq-note">复制地址，填到 QQ 开放平台的「事件订阅」，开启单聊消息。</p><button type="button" class="link" id="setup-refresh-qq">检查连接状态 <svg><use href="#i-refresh"/></svg></button></div>
+              <section class="setup-callback owner-setup" aria-labelledby="owner-title">
+                <div class="card-title"><h3 id="owner-title">认领主人</h3><span class="badge neutral" id="owner-status">未认领</span></div>
+                <p id="owner-note">连接云端并保存 QQ 机器人后，就能生成一次性认领码。</p>
+                <form class="setup-form" id="owner-form" autocomplete="off"><fieldset id="owner-fields" disabled>
+                  <label for="owner-name">想让她怎么称呼你？（选填）</label><input id="owner-name" type="text" maxlength="20" placeholder="例如：小韩" spellcheck="false">
+                  <div class="setup-actions"><button class="button primary" id="owner-generate" type="submit">生成认领码</button><button class="link" id="owner-refresh" type="button" hidden>刷新认领状态 <svg><use href="#i-refresh"/></svg></button></div>
+                </fieldset></form>
+                <div class="owner-claim" id="owner-claim" hidden>
+                  <p>用你自己的 QQ 在机器人<strong>私聊</strong>里发送这条消息。认领码请勿转发。</p>
+                  <div class="webhook"><code id="owner-command"></code><button class="button subtle" id="copy-owner-command" type="button"><svg><use href="#i-copy"/></svg>复制认领消息</button></div>
+                  <p id="owner-expires"></p>
+                </div>
+                <p class="setup-feedback" id="owner-feedback" aria-live="polite"></p>
+              </section>
+            </div>
+          </details>
+        </div>
+        <div class="setup-finished" id="setup-finished" hidden><svg><use href="#i-check"/></svg><div><strong>主人已认领，可以开始聊天</strong><p>去 QQ 给机器人发一句「今天有点累，想说说话」。想换个聊天语气，打开「人设与记忆」。</p></div><a class="link" href="#persona">去设置人设 <svg><use href="#i-chevron"/></svg></a></div>
+      </section>
+      <details class="technical-overview"><summary>查看服务状态和运行记录</summary>
+      <div class="card-grid">
+        <section class="card info-card" aria-labelledby="greeting-title">
+          <div class="card-title"><h2 id="greeting-title">主动问候</h2><button class="toggle" id="quick-greet" type="button" role="switch" aria-checked="false" aria-label="启用主动问候" disabled><span></span></button></div>
+          <div class="greeting-summary"><svg><use href="#i-clock"/></svg><span id="greet-summary">正在读取问候规则…</span></div>
+          <div class="card-footer"><a class="link" href="#greetings">管理问候规则 <svg><use href="#i-chevron"/></svg></a></div>
+        </section>
+        <section class="card info-card" aria-labelledby="ability-title">
+          <div class="card-title"><h2 id="ability-title">能力状态</h2></div>
+          <ul class="abilities">
+            <li><svg><use href="#i-heart"/></svg><span>陪伴对话</span><span id="model-status" class="badge neutral">读取中</span></li>
+            <li><svg><use href="#i-book"/></svg><span>资料查询</span><span id="search-status" class="badge neutral">读取中</span></li>
+            <li><svg><use href="#i-wave"/></svg><span>语音回复</span><span id="voice-status" class="badge neutral">读取中</span></li>
+          </ul>
+          <div class="card-footer overview-links"><a class="link" href="#ai">查看高级接入 <svg><use href="#i-chevron"/></svg></a><a class="link" href="#persona">人设与记忆 <svg><use href="#i-chevron"/></svg></a></div>
+        </section>
+      </div>
+      <p class="aside-note">OneBot（可选） <span class="badge neutral" id="onebot-status">未配置</span></p>
+      <div class="overview-foot"><span><span class="dot"></span> <span id="health-text">正在连接中转服务…</span></span><div class="setup-actions"><a class="link" href="#activity">运行记录</a><button class="link" id="check">测试中转服务 <svg><use href="#i-chevron"/></svg></button></div></div>
+      </details>
+    </section>
+
+    <section class="page subpage" id="ai" hidden>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-code"/></svg> 模型与调用</span><h1>高级接入</h1><p>在这里管理模型和对外接口。只想接上 QQ，可以回到「开始使用」。</p></div>
+      <section class="card ai-card model-card" aria-labelledby="ai-model-title">
+        <div class="card-title"><h2 id="ai-model-title">可接入模型</h2><span class="badge neutral" id="ai-model-status">读取中</span></div>
+        <p id="active-model">选择一个模型查看配置。模型密钥只填在云端。</p>
+        <ul class="model-options" id="model-options" aria-label="可查看的模型配置"></ul>
+        <div class="model-detail" id="model-detail" hidden>
+          <div class="model-detail-head"><p id="model-note"></p><a class="link" id="model-docs" href="https://developers.openai.com/" target="_blank" rel="noreferrer">官方文档 <svg><use href="#i-chevron"/></svg></a></div>
+          <pre class="model-config" id="model-config"></pre>
+          <div class="model-detail-foot"><span>复制后填到云端，再设置服务商的 <code>AI_API_KEY</code>。</span><button type="button" class="button subtle" id="copy-model"><svg><use href="#i-copy"/></svg>复制配置</button></div>
+        </div>
+        <p class="model-more">也支持自定义服务：填入兼容 Chat Completions 的 API 根地址和模型 ID。</p>
+      </section>
+      <section hidden class="card ai-card" aria-labelledby="dsh-title">
+        <div class="card-title"><h2 id="dsh-title">DSH 插件</h2><span class="badge neutral" id="dsh-status">待配置</span></div>
+        <p>授权的 QQ 单聊可以调用你允许的 DeepSeek Harness 工具。宇伴只把你在命令里写的参数交给工具。</p>
+        <pre class="model-config">插件 &lt;工具别名&gt; {"参数":"值"}</pre>
+        <p id="dsh-tools" hidden></p>
+        <div class="dsh-catalog-head"><h3>可添加插件</h3><span class="badge neutral" id="dsh-plan-status" aria-live="polite">未添加</span></div>
+        <p class="dsh-help">可复制部署步骤，也可以到<a class="link" href="#persona">「人设与记忆」</a>导入想带给 GPT 的内容。</p>
+        <ul class="dsh-options" id="dsh-options" aria-label="DSH 插件选项"></ul>
+        <details class="ai-example" id="dsh-plan" hidden>
+          <summary>查看已添加插件的安装清单</summary>
+          <p id="dsh-plan-conflict" hidden>dsh-remember 与 dsh-plugin-memory 使用同一注册名。请给命令里的两个变量填入不同且已存在的 DSH profile 名，再分别安装。</p>
+          <pre class="model-config" id="dsh-plan-text"></pre>
+          <button class="button subtle" id="copy-dsh-plan" type="button"><svg><use href="#i-copy"/></svg>复制安装清单</button>
+        </details>
+        <details class="ai-example"><summary>查看接入方式</summary><p>在运行 DSH 的云服务器安装宇伴网关插件，再配置网关地址、密钥、允许调用的 QQ 标识和工具别名。在 QQ 单聊发 <code>插件身份</code> 可查看本账号的接入标识。</p></details>
+      </section>
+      <section hidden class="card ai-card" aria-labelledby="gpt-actions-title">
+        <div class="card-title"><h2 id="gpt-actions-title">让自定义 GPT 查插件记忆</h2><span class="badge neutral" id="gpt-actions-status">待连接云端</span></div>
+        <p>已配置 dsh-chain 时，自定义 GPT 可以查询判断记录。这个入口只查询，不会写入记忆、读取 QQ 聊天或发送 QQ 消息。</p>
+        <details class="ai-example" id="gpt-actions-steps"><summary>查看 GPT 接入步骤</summary><ol class="guide-steps"><li>部署 DSH 网关，只授权 <code>chain_about</code>，在宇伴云端设置独立的 <code>YUBAN_GPT_TOOL_TOKEN</code>。</li><li>在自定义 GPT 的「操作 / Actions」里导入下方架构，身份验证选「API 密钥 → Bearer」。</li><li>填刚设置的独立密钥，在 GPT 编辑器里测试。个人插件库请只分享给你自己。</li></ol><div class="webhook"><code id="gpt-schema-url">连接云端并启用后显示</code><button class="button subtle" type="button" id="copy-gpt-schema" disabled><svg><use href="#i-copy"/></svg>复制架构网址</button></div><a class="link guide-link" href="https://developers.openai.com/api/docs/actions/getting-started" target="_blank" rel="noreferrer">OpenAI 官方接入说明 <svg><use href="#i-chevron"/></svg></a></details>
+      </section>
+      <section class="card ai-card" aria-labelledby="ai-service-title">
+        <div class="card-title"><h2 id="ai-service-title">供其他服务调用</h2><span class="badge neutral" id="ai-api-status">读取中</span></div>
+        <p id="ai-preview-note" hidden>请打开窗口上方的「云端连接」，连接后可查看接口状态和实际地址。</p>
+        <p id="ai-token-note">在云端设置 <code>YUBAN_AI_API_TOKEN</code> 后，即可通过独立的 Bearer 口令调用。</p>
+        <div class="ai-endpoint" id="ai-endpoint">
+          <span class="api-method">POST</span>
+          <div class="webhook"><code id="ai-url">连接云端后显示</code><button class="button subtle" id="copy-ai-url" type="button" disabled><svg><use href="#i-copy"/></svg><span>复制地址</span></button></div>
+        </div>
+        <details class="ai-example" id="ai-api-example">
+          <summary>查看请求示例</summary>
+          <pre><code id="ai-curl"></code></pre>
+          <p><code>mode</code> 默认为 <code>chat</code>，需要配置模型。使用 <code>search</code> 可查询资料。响应包含回复 <code>text</code>、来源 <code>sources</code>、模式 <code>mode</code> 和服务来源 <code>provider</code>。</p>
+        </details>
+      </section>
+      <p class="aside-note"><svg><use href="#i-info"/></svg> 模型密钥和接口口令保存在云端。接口返回内容给调用方，QQ 消息仍通过机器人回调处理。</p>
+    </section>
+
+    <section class="page subpage" id="persona" hidden>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-heart"/></svg> 陪伴方式</span><h1>人设与记忆</h1><p>写下你想怎样相处。熟悉彼此的过程，可以留给日常聊天。</p></div>
+      <form class="persona-form" id="companion-settings" aria-labelledby="companion-title">
+        <section class="card ai-card" aria-labelledby="companion-title">
+          <div class="card-title"><h2 id="companion-title">自定义人设</h2></div>
+          <div class="persona-fields">
+            <label for="companion-name"><strong>陪伴昵称</strong><small>留空时沿用云端设置的名字，默认小宇。</small></label>
+            <input id="companion-name" name="companionName" maxlength="20" placeholder="小宇" autocomplete="off">
+            <label for="companion-persona"><strong>你想怎样相处</strong><small>可以随时修改，也可以留空。</small></label>
+            <textarea id="companion-persona" name="companionPersona" maxlength="1000" rows="5" placeholder="用你自己的话写下关系、说话方式和相处边界。" aria-describedby="persona-count"></textarea>
+            <div class="persona-field-footer"><button type="button" class="link" id="import-persona">导入 AGENT.md 或 SOUL.md <svg><use href="#i-chevron"/></svg></button><span class="persona-count" id="persona-count">0 / 1000</span></div>
+          </div>
+          <details class="persona-writing"><summary>人设怎么写</summary><p>先写你希望彼此是什么关系，平时怎么称呼。想到开心或甜蜜的时刻，可以写你喜欢怎样分享好消息、表达在意。闹别扭或意见不同时，你希望先听彼此说完，还是把感受直说出来？也可以加一句你在意的边界。</p></details>
+        </section>
+        <section class="card ai-card memory-card" aria-labelledby="memory-title">
+          <div class="card-title"><h2 id="memory-title">相处记忆</h2><label class="memory-permission" for="memory-enabled">允许开启<input type="checkbox" id="memory-enabled" name="memoryEnabled" class="switch-input" checked></label></div>
+          <p>主人在 QQ 私聊发一次「开启记忆」，之后照常聊。小宇会从聊天里挑出你们的暗号、习惯、约好的计划和偏好，留下简短的记忆，聊到相关话题时再想起来。普通对话只保留最近一段。</p>
+          <p class="memory-note">比如你顺口说「以后我们就把加班叫打怪吧」，之后再聊「今天又去打怪了」，小宇就能接上这个梗。</p>
+          <dl class="memory-commands" aria-label="QQ 私聊记忆命令">
+            <div><dt><code>开启记忆</code></dt><dd>开始积累聊天里的小事和相处习惯。</dd></div>
+            <div><dt><code>查看相处记忆</code></dt><dd>看聊天里留下的小事。命令后加空格和页码可翻页。</dd></div>
+            <div><dt><code>忘记 小事1</code></dt><dd>删掉指定小事，数字换成查看时显示的编号。</dd></div>
+            <div><dt><code>查看记忆</code></dt><dd>看学到的相处方式和你单独交代的笔记。</dd></div>
+            <div><dt><code>清空记忆</code></dt><dd>清除记忆和近期对话，保留开关状态。</dd></div>
+            <div><dt><code>关闭记忆</code></dt><dd>一并清除，并停止积累长期记忆。</dd></div>
+          </dl>
+          <p class="memory-note">有特别想留下的内容，也可以发「记住 内容」单独存为笔记。</p>
+          <button type="button" class="link import-link" id="import-memory">从 DSH 摘要挑选记忆 <svg><use href="#i-chevron"/></svg></button>
+          <div class="companion-actions"><span id="companion-note">保存后应用于下一条陪伴回复。</span><button type="submit" class="button primary" id="save-companion" disabled>保存人设与记忆设置</button></div>
+        </section>
+      </form>
+    </section>
+
+    <section class="page subpage" id="greetings" hidden>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-moon"/></svg> 问候设置</span><h1>问候的分寸，由你决定。</h1><p>超过设定时间后，小宇会参考你写的人设和最近聊过的话，发一句简短的 QQ 消息。</p></div>
+      <form class="card settings" id="settings">
+        <div class="setting-row"><div><h2>主动问候</h2><p>认领主人后，在 QQ 私聊发「开启问候」即可。</p></div><input type="checkbox" id="greet-enabled" name="enabled" class="switch-input" aria-label="启用主动问候"></div>
+        <div class="setting-row"><label for="delay"><strong>等待时间</strong><small>从对方上一条消息开始计时。每段沉默期最多问候一次。</small></label><div class="time-input"><input id="delay" name="afterMinutes" type="number" min="1" max="10080" required><span>分钟</span></div></div>
+        <div class="setting-row"><label for="quiet-enabled"><strong>夜间免打扰</strong><small>免打扰期间到期的问候，会在结束后发出。使用北京时间。</small></label><input type="checkbox" id="quiet-enabled" name="quietEnabled" class="switch-input"></div>
+        <div class="setting-row quiet-times"><div class="time-input"><label for="quiet-start">开始</label><input id="quiet-start" name="quietStart" type="time" required></div><span>—</span><div class="time-input"><label for="quiet-end">结束</label><input id="quiet-end" name="quietEnd" type="time" required></div></div>
+        <div class="setting-row"><label for="voice-default"><strong>默认语音回复</strong><small>开启后，支持的闲聊回复优先发 QQ 语音；资料和问候仍发文字。</small></label><input type="checkbox" id="voice-default" name="voiceReplies" class="switch-input"></div>
+        <div class="form-footer"><span id="opted-in">—</span><button class="button primary" type="submit">保存设置</button></div>
+      </form>
+      <p class="aside-note"><svg><use href="#i-info"/></svg> 随时在 QQ 发「关闭问候」即可停止。QQ 官方机器人需具备单聊唤醒权限，发送频次由平台限制。</p>
+    </section>
+
+    <section class="page subpage" id="usage" aria-labelledby="usage-title" hidden>
+      <div class="page-intro usage-intro">
+        <div><h1 id="usage-title">用量看板</h1><p>查看宇伴发出的模型请求和服务商返回的 Token。</p></div>
+        <button class="button subtle" id="usage-refresh" type="button"><svg aria-hidden="true"><use href="#i-refresh"/></svg>刷新</button>
+      </div>
+      <p class="usage-status" id="usage-status" role="status">正在读取用量…</p>
+      <div class="usage-results" id="usage-results" hidden>
+        <section class="card usage-current" aria-labelledby="usage-current-title">
+          <div>
+            <h2 id="usage-current-title">当前模型</h2>
+            <p class="usage-current-model" id="usage-current-model"></p>
+            <p class="usage-current-provider" id="usage-current-provider"></p>
+          </div>
+          <span class="badge neutral" id="usage-key"></span>
+        </section>
+        <div class="usage-periods">
+          <section class="card usage-period" aria-labelledby="usage-today-title"><h2 id="usage-today-title">今天</h2><dl class="usage-kpis" id="usage-today"></dl></section>
+          <section class="card usage-period" aria-labelledby="usage-month-title"><h2 id="usage-month-title">近 30 天</h2><dl class="usage-kpis" id="usage-month"></dl></section>
+        </div>
+        <p class="usage-note">按北京时间的自然日统计，近 30 天包含今天。Token 仅统计服务商实际返回的数量；「—」表示未取得数量。账单和余额以服务商后台为准。<span id="usage-since"></span></p>
+        <section class="card usage-breakdown" id="usage-days" aria-labelledby="usage-days-title" hidden>
+          <h2 id="usage-days-title">最近 7 天</h2>
+          <table aria-labelledby="usage-days-title"><thead><tr><th scope="col">日期</th><th scope="col">Token</th><th scope="col">请求</th></tr></thead><tbody id="usage-day-rows"></tbody></table>
+        </section>
+        <section class="card usage-breakdown" id="usage-models" aria-labelledby="usage-models-title" hidden>
+          <h2 id="usage-models-title">近 30 天按模型</h2>
+          <table aria-labelledby="usage-models-title"><thead><tr><th scope="col">模型</th><th scope="col">Token</th><th scope="col">请求</th></tr></thead><tbody id="usage-model-rows"></tbody></table>
+        </section>
+      </div>
+    </section>
+
+    <section class="page subpage" id="help" hidden>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-book"/></svg> 新手说明</span><h1>第一次用宇伴</h1><p>App 用来设置。日常聊天、查资料、听语音，都在 QQ 里。</p></div>
+      <section class="card ai-card" aria-labelledby="help-start-title"><div class="card-title"><h2 id="help-start-title">先准备这三样</h2></div><ol class="guide-steps"><li><strong>宇伴云端网址。</strong>还没有的话，先部署一次，把部署后的 HTTPS 网址和管理口令拿到手。<a href="https://github.com/xiaohantiko/yuban-showcase#本地运行" target="_blank" rel="noreferrer">查看部署说明</a>。</li><li><strong>任意一家 AI 的 API 密钥。</strong>有哪家的就选哪家；不需要为其他模型注册账号。宇伴会用它测试一条很短的回复。</li><li><strong>一个 QQ 机器人。</strong>到 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台</a>创建，找到 AppID 和 ClientSecret，回宇伴按提示验证、复制回调地址。</li></ol><a class="button primary" href="#overview">回到三步向导</a></section>
+      <section class="card ai-card" aria-labelledby="help-owner-title"><div class="card-title"><h2 id="help-owner-title">第一次私聊，先认领主人</h2></div><ol class="guide-steps"><li>在「开始使用 → 连接 QQ → 认领主人」填一个可选称呼，点击「生成认领码」。</li><li>复制整条认领消息，用你自己的 QQ 在机器人私聊里发送。认领码 10 分钟内有效，只能用一次。</li><li>看到认领成功的回复，就可以开始聊天。之后可在 QQ 私聊发「叫我 小韩」修改称呼。</li></ol><p class="import-help">宇伴会绑定发出有效认领码的 QQ 账号。别人先发消息，或说「我是你主人」，都不会改变身份。</p></section>
+      <section class="card ai-card" aria-labelledby="help-chat-title"><div class="card-title"><h2 id="help-chat-title">认领后，直接在 QQ 发消息</h2></div><dl class="guide-examples"><div><dt>「今天有点累，想说说话」</dt><dd>开始陪伴聊天。</dd></div><div><dt>「帮我查一下极光怎么形成」</dt><dd>查资料并返回来源。</dd></div><div><dt>「用语音回复：给我讲个故事」</dt><dd>配置语音服务后可用。</dd></div><div><dt>「开启记忆」或「开启问候」</dt><dd>分别打开相处记忆和主动问候，随时能关。</dd></div></dl></section>
+      <section class="card ai-card" aria-labelledby="help-extra-title"><div class="card-title"><h2 id="help-extra-title">碰到问题时</h2></div><details class="ai-example"><summary>只想试试，需要部署吗？</summary><p>可以离线写人设和查看安装清单。QQ 收发和主动问候需要部署。</p></details><details class="ai-example"><summary>为什么已经填了机器人，QQ 还是没回复？</summary><p>先检查向导里的回调状态，再确认 QQ 平台订阅了单聊消息。发一条测试后，到<a href="#activity">运行记录</a>看收发结果。</p></details><details class="ai-example"><summary>我在用 GPT，原来的 DSH 插件怎么用？</summary><p>在「人设与记忆」导入 AGENT.md、SOUL.md 或挑选记忆摘要，GPT 模型就能使用这些内容。想让自定义 GPT 查询 dsh-chain，去<a href="#ai">高级接入</a>配置只读工具。</p></details></section>
+    </section>
+
+    <section class="page subpage" id="feedback" aria-labelledby="member-feedback-title" hidden>
+      <div class="page-intro"><h1 id="member-feedback-title">问题反馈</h1><p>说明问题出现在哪一步，以及你看到的结果。</p></div>
+      <form class="card member-feedback-form" id="member-feedback-form" method="post">
+        <label for="feedback-title">标题</label>
+        <input id="feedback-title" name="title" type="text" minlength="3" maxlength="80" required>
+        <label for="feedback-message">问题描述</label>
+        <textarea id="feedback-message" name="message" rows="6" minlength="8" maxlength="2000" required></textarea>
+        <p class="setup-feedback" id="member-feedback-status" role="status"></p>
+        <button class="button primary" id="submit-feedback" type="submit">发送反馈</button>
+      </form>
+    </section>
+
+    <section class="page subpage" id="activity" hidden>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-clipboard"/></svg> 运行状态</span><h1>运行记录</h1><p>查看中转测试、QQ 回复和主动问候是否送出。</p></div>
+      <div class="card activity-card"><div class="activity-head"><h2>最近记录</h2><button class="button subtle" id="refresh"><svg><use href="#i-refresh"/></svg>刷新</button></div><div id="logs" aria-live="polite"></div></div>
+    </section>
+  </main>
+
+  <dialog id="disable-member-dialog" aria-labelledby="disable-member-title" aria-describedby="disable-member-message">
+    <div class="dialog-header"><h2 id="disable-member-title">禁用成员账号？</h2></div>
+    <p class="import-help" id="disable-member-message"></p>
+    <div class="dialog-actions">
+      <button class="button subtle" id="cancel-disable-member" type="button" autofocus>取消</button>
+      <button class="button danger" id="confirm-disable-member" type="button">确认禁用</button>
+    </div>
+  </dialog>
+
+  <dialog id="dsh-import-dialog" aria-labelledby="dsh-import-title">
+    <div class="dialog-header"><div><span class="eyebrow">跨模型迁移</span><h2 id="dsh-import-title">导入 DSH 内容</h2></div><button class="button subtle icon-only" id="close-dsh-import" type="button" aria-label="关闭导入"><svg><use href="#i-close"/></svg></button></div>
+    <p class="import-help" id="dsh-import-help"></p>
+    <label class="file-label" for="dsh-import-file">选择 Markdown 文件</label><input type="file" id="dsh-import-file" accept=".md,.markdown,.txt,text/plain,text/markdown">
+    <label class="import-paste" for="dsh-import-text">也可以直接粘贴文本</label><textarea id="dsh-import-text" rows="5" maxlength="30000"></textarea>
+    <p class="setup-feedback" id="dsh-import-result" aria-live="polite"></p>
+    <div id="dsh-memory-preview" class="dsh-memory-preview" hidden><p>勾选想留下的内容。在 QQ 单聊开启记忆后，逐条发送生成的命令。</p><fieldset id="dsh-memory-candidates" aria-label="选择要保留的记忆"></fieldset><pre class="model-config" id="dsh-memory-commands"></pre><button type="button" class="button subtle" id="copy-memory-commands" disabled>复制记忆命令</button></div>
+    <div class="dialog-actions"><button class="button subtle" id="cancel-dsh-import" type="button">取消</button><button class="button primary" id="apply-dsh-import" type="button">预览</button></div>
+  </dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

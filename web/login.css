@@ -1,0 +1,52 @@
+.auth-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 28px 16px;
+  background: radial-gradient(ellipse at 66% 14%, var(--side), var(--paper) 65%);
+}
+
+.auth-card {
+  width: min(100%, 448px);
+  padding: clamp(22px, 6vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: #fffdfd;
+  box-shadow: 0 14px 45px #4d36570b;
+}
+
+.auth-brand { margin: 0 0 25px; }
+.auth-card h1 { font-size: clamp(24px, 5.8vw, 30px); line-height: 1.25; }
+.auth-description { margin-top: 8px; color: var(--muted); line-height: 1.65; }
+.auth-error { margin-top: 14px; padding: 9px 12px; border-radius: 8px; background: #fbefef; color: #8c343d; line-height: 1.45; }
+.auth-error:empty, .auth-copy-status:empty { display: none; }
+#auth-retry { margin-top: 15px; }
+
+.auth-card form, .auth-recovery { display: grid; gap: 15px; margin-top: 22px; }
+.auth-field { display: grid; gap: 7px; min-width: 0; color: var(--ink); font-weight: 650; }
+.auth-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 43px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 400;
+}
+.auth-field small, .auth-copy-status { color: var(--muted); font-weight: 400; line-height: 1.5; }
+.auth-field .auth-secret { background: var(--side); font-family: ui-monospace, monospace; }
+.auth-card .button { min-height: 42px; font-size: 14px; }
+.auth-card .link { min-height: 32px; justify-self: start; }
+.auth-login-options { display: flex; flex-wrap: wrap; gap: 3px 18px; }
+.auth-remember { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); line-height: 1.45; cursor: pointer; }
+.auth-remember input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.auth-remember-status:not(:empty) { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.auth-verification altcha-widget { display: block; max-width: 100%; --altcha-border-color: var(--line); --altcha-border-radius: 9px; }
+.auth-verification p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.auth-verification p:not(:empty) { margin-top: 6px; }
+.auth-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.auth-actions button { flex: 1 0 auto; }

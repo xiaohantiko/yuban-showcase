@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f9f7f8">
+  <title>登录宇伴</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/login.css">
+  <script defer src="/login.js"></script>
+</head>
+<body>
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="auth-title">
+      <div class="brand auth-brand">
+        <span class="brand-portrait"><span class="public-brand-mark" aria-hidden="true">宇</span></span>
+        <span><strong>宇伴</strong><small>QQ AI 陪伴中转站</small></span>
+      </div>
+      <h1 id="auth-title" tabindex="-1">登录云端管理台</h1>
+      <p class="auth-description" id="auth-description">正在检查账号状态…</p>
+      <p class="auth-error" id="auth-error" role="alert"></p>
+      <button class="button subtle" id="auth-retry" type="button" hidden>重试</button>
+
+      <form id="login-form" method="post" hidden>
+        <label class="auth-field">
+          <span>用户名</span>
+          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="auth-field">
+          <span>密码</span>
+          <input name="password" type="password" autocomplete="current-password" maxlength="128" required>
+        </label>
+        <div id="login-remember-panel" hidden>
+          <label class="auth-remember"><input type="checkbox" id="login-remember">在此设备记住账号和密码</label>
+          <p class="auth-remember-status" id="login-remember-status" role="status"></p>
+          <button class="link" id="login-forget-retry" type="button" hidden>重试清除</button>
+        </div>
+        <button class="button primary auth-submit" type="submit">登录</button>
+        <div class="auth-login-options">
+          <button class="link" id="show-register" type="button" hidden>注册账号</button>
+          <button class="link" id="show-reset" type="button">忘记密码</button>
+          <button class="link" id="show-claim" type="button" hidden>认领原有管理台</button>
+        </div>
+      </form>
+
+      <form id="register-form" method="post" hidden>
+        <div class="auth-field">
+          <label for="register-username">用户名</label>
+          <input id="register-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="2" maxlength="32" aria-describedby="username-rule" required>
+          <small id="username-rule">2 至 32 个字符。用中文、英文字母或数字开头，也可包含点、下划线和连字符。</small>
+        </div>
+        <div class="auth-field">
+          <label for="register-password">密码</label>
+          <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" aria-describedby="register-password-rule" required>
+          <small id="register-password-rule">8 至 128 个字符，至少包含一个英文字母和一个数字。</small>
+        </div>
+        <div class="auth-field" id="register-setup-field">
+          <label for="register-setup-code">云端管理台口令</label>
+          <input id="register-setup-code" name="setupCode" type="password" autocomplete="off" aria-describedby="setup-code-hint" required>
+          <small id="setup-code-hint">使用部署宇伴时设置的口令，只在首次注册时填写。</small>
+        </div>
+        <div class="auth-verification" id="registration-verification" hidden>
+          <div id="registration-widget"></div>
+          <p id="registration-verification-status" role="status"></p>
+          <button class="link" id="registration-verification-retry" type="button" hidden>重试验证</button>
+        </div>
+        <button class="button primary auth-submit" type="submit" id="register-submit">注册账号</button>
+        <button class="link" id="register-back" type="button" hidden>返回登录</button>
+      </form>
+
+      <form id="reset-form" method="post" hidden>
+        <label class="auth-field">
+          <span>用户名</span>
+          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="auth-field">
+          <span>恢复码</span>
+          <input name="recoveryCode" type="password" autocomplete="off" required>
+        </label>
+        <div class="auth-field">
+          <label for="reset-password">新密码</label>
+          <input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" aria-describedby="reset-password-rule" required>
+          <small id="reset-password-rule">8 至 128 个字符，至少包含一个英文字母和一个数字。</small>
+        </div>
+        <button class="button primary auth-submit" type="submit">重设密码</button>
+        <button class="link" id="back-to-login" type="button">返回登录</button>
+      </form>
+
+      <div class="auth-recovery" id="auth-recovery" hidden>
+        <label class="auth-field">
+          <span>恢复码</span>
+          <input id="recovery-code" class="auth-secret" type="text" autocomplete="off" spellcheck="false" readonly>
+        </label>
+        <div class="auth-actions">
+          <button class="button subtle" id="copy-recovery-code" type="button">复制恢复码</button>
+          <button class="button primary" id="finish-recovery" type="button">已保存，返回登录</button>
+        </div>
+        <p class="auth-copy-status" id="copy-status" role="status"></p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,145 @@
+import { randomUUID } from 'node:crypto';
+import { companionGreeting, validGreeting } from './companion.mjs';
+import { boundedChatContext, MAX_STORED_MESSAGES } from './history.mjs';
+
+export const defaultSettings = Object.freeze({
+  enabled: true, afterMinutes: 360, quietEnabled: true, quietStart: '23:00', quietEnd: '08:00',
+  timeZone: 'Asia/Shanghai', voiceReplies: false,
+  companionName: '', companionPersona: '', memoryEnabled: true,
+  dshPlugins: Object.freeze([]),
+});
+export const newThread = () => ({ messages: [], lastUserAt: null, attemptedFor: null, optedIn: false, target: null });
+export const newMessage = (role, text, options = {}) => ({
+  id: randomUUID(), role, text, at: Date.now(), ...options,
+});
+
+export function addMessage(thread, message) {
+  thread.messages.push(message);
+  if (thread.messages.length > MAX_STORED_MESSAGES) thread.messages.splice(0, thread.messages.length - MAX_STORED_MESSAGES);
+  return message;
+}
+
+const validTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const dshPluginIDs = new Set(['agent-md', 'remember', 'memory', 'chain']);
+export function readSettings(current) {
+  const settings = { ...defaultSettings, ...current };
+  delete settings.companionStyle;
+  return settings;
+}
+
+export function mergeSettings(current, input) {
+  const next = readSettings(current);
+  if ('dshPlugins' in input) {
+    const plugins = input.dshPlugins;
+    if (!Array.isArray(plugins) || plugins.length > dshPluginIDs.size
+        || [...plugins].some((id) => !dshPluginIDs.has(id)) || new Set(plugins).size !== plugins.length) {
+      throw new Error('请选择有效且不重复的 DSH 插件');
+    }
+    // A plan only. Runtime installation and permission use separate settings.
+    next.dshPlugins = [...plugins];
+  }
+  if ('companionName' in input) {
+    const name = typeof input.companionName === 'string' ? input.companionName.trim() : null;
+    if (name === null || name.length > 20 || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(name)) {
+      throw new Error('陪伴昵称需为单行文本，最多 20 个字符');
+    }
+    next.companionName = name;
+  }
+  if ('companionPersona' in input) {
+    const persona = typeof input.companionPersona === 'string' ? input.companionPersona.trim() : null;
+    if (persona === null || persona.length > 1_000) throw new Error('角色设定需为文本，最多 1000 个字符');
+    next.companionPersona = persona;
+  }
+  for (const key of ['enabled', 'quietEnabled', 'voiceReplies', 'memoryEnabled']) {
+    if (!(key in input)) continue;
+    if (typeof input[key] !== 'boolean') throw new Error('开关值无效');
+    next[key] = input[key];
+  }
+  if ('afterMinutes' in input) {
+    if (!Number.isInteger(input.afterMinutes) || input.afterMinutes < 1 || input.afterMinutes > 10080) {
+      throw new Error('等待时间须在 1 分钟到 7 天之间');
+    }
+    next.afterMinutes = input.afterMinutes;
+  }
+  for (const key of ['quietStart', 'quietEnd']) {
+    if (!(key in input)) continue;
+    if (typeof input[key] !== 'string' || !validTime.test(input[key])) throw new Error('时间格式无效');
+    next[key] = input[key];
+  }
+  if (next.quietEnabled && next.quietStart === next.quietEnd) throw new Error('免打扰开始和结束时间需要不同');
+  return next;
+}
+
+const minuteOfDay = (time) => time.slice(0, 2) * 60 + Number(time.slice(3));
+const timeFormats = new Map();
+function clockMinute(at, timeZone) {
+  if (!timeFormats.has(timeZone)) timeFormats.set(timeZone, new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }));
+  return minuteOfDay(timeFormats.get(timeZone).format(at));
+}
+export function isQuiet(at, settings) {
+  if (!settings.quietEnabled) return false;
+  const time = clockMinute(at, settings.timeZone);
+  const start = minuteOfDay(settings.quietStart);
+  const end = minuteOfDay(settings.quietEnd);
+  return start < end ? time >= start && time < end : time >= start || time < end;
+}
+
+export function nextGreeting(thread, settings, now = Date.now()) {
+  if (!settings.enabled || !thread.lastUserAt || thread.attemptedFor === thread.lastUserAt) return null;
+  const at = Math.max(now, thread.lastUserAt + settings.afterMinutes * 60_000);
+  if (!isQuiet(at, settings)) return at;
+  const delay = (minuteOfDay(settings.quietEnd) - clockMinute(at, settings.timeZone) + 1440) % 1440;
+  return Math.floor(at / 60_000) * 60_000 + delay * 60_000;
+}
+
+export const searchRequest = /^(?:[\s/]*(?:查资料|查一下|帮我查(?:一下)?|搜索|搜一下|帮我搜|search)\s*[:：]?)/i;
+export const voiceRequest = /^(?:请|可以)?(?:用|发)?语音(?:回复|回答)?\s*[:：,，]?\s*/;
+export const commandOn = /^(?:\/|#)?\s*(?:开启问候|打开问候|启用问候)$/;
+export const commandOff = /^(?:\/|#)?\s*(?:关闭问候|停用问候|取消问候|停止问候)$/;
+
+export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName } = {}) {
+  const { companionName, companionPersona, memoryEnabled = true } = settings;
+  const wantsVoice = voice || settings.voiceReplies || voiceRequest.test(text);
+  const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
+  const kind = mode === 'search' || searchRequest.test(input) ? 'search' : 'chat';
+  const query = kind === 'search' ? (input.replace(searchRequest, '').trim() || input) : input;
+  let result;
+  try {
+    result = await providers.reply({
+      messages: boundedChatContext(kind === 'search' ? [] : messages, query),
+      mode: kind, companionName, companionPersona,
+      ...(typeof ownerName === 'string' ? { ownerName } : {}),
+      memoryContext: memoryEnabled ? memoryContext : undefined,
+    });
+  } catch {
+    result = { text: kind === 'search' ? '这次没能连上资料来源，稍后再试试好吗？' : '刚才没能生成回复。你想接着聊时，可以再发一句。' };
+  }
+  const sources = Array.isArray(result?.sources) ? result.sources.filter((item) => typeof item?.title === 'string' && /^https?:\/\//i.test(item?.url)).slice(0, 5) : [];
+  return newMessage('assistant', result?.text || '我在听。你想从哪里聊起？', {
+    at, ...(sources.length ? { sources } : {}), ...(wantsVoice && !sources.length ? { voice: true } : {}),
+  });
+}
+
+export async function createGreeting(providers, settings, messages, options = {}) {
+  const { at = Date.now(), ownerName, idleMinutes, memoryContext } = typeof options === 'number' ? { at: options } : options;
+  const { companionName, companionPersona, memoryEnabled = true } = settings;
+  const context = {
+    messages: messages.slice(-8), companionName, companionPersona, idleMinutes,
+    ...(typeof ownerName === 'string' ? { ownerName } : {}),
+    memoryContext: memoryEnabled && memoryContext ? { traits: memoryContext.traits, personality: memoryContext.personality } : undefined,
+  };
+  let result;
+  try { result = await providers.greeting(context); } catch { /* Use a local greeting. */ }
+  return newMessage('assistant', validGreeting(result?.text, context) || companionGreeting(context), { kind: 'greeting', at });
+}
+
+export function renderForTransport(message) {
+  return [message.text, ...(message.sources ?? []).map((s) => `${s.title}：${s.url}`)].join('\n');
+}
+
+export function transportError(err) {
+  const code = err?.code;
+  if (typeof code === 'number') return `平台返回 ${code}`;
+  if (Number.isInteger(err?.status)) return `请求返回 ${err.status}`;
+  return '发送失败，请检查平台权限和连接设置';
+}

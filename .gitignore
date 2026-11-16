@@ -1,0 +1,10 @@
+.env
+.env.*
+.data/
+data/
+dist/
+node_modules/
+windows/bin/
+windows/obj/
+*.log
+.DS_Store
