@@ -1,0 +1,164 @@
+name: Build and publish verified installers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-package-release
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Build, unpack, and launch the macOS package
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/packages"
+          scratch=$(mktemp -d)
+          extracted="$scratch/extracted"
+          mounted=""
+          smoke_pid=""
+          cleanup() {
+            if [[ -n "$smoke_pid" ]]; then
+              kill "$smoke_pid" 2>/dev/null || true
+              wait "$smoke_pid" 2>/dev/null || true
+            fi
+            if [[ -n "$mounted" ]]; then
+              hdiutil detach "$mounted" -quiet || true
+            fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          smoke_start() {
+            "$@" > "$scratch/smoke.log" 2>&1 &
+            smoke_pid=$!
+            sleep 5
+            if ! kill -0 "$smoke_pid"; then
+              cat "$scratch/smoke.log" >&2
+              echo 'The packaged app exited during startup.' >&2
+              return 1
+            fi
+            kill "$smoke_pid"
+            wait "$smoke_pid" 2>/dev/null || true
+            smoke_pid=""
+          }
+          mkdir -p "$output" "$extracted"
+          npm ci
+          npm test
+          bash desktop/build.sh --dmg
+          asset=Yuban-macOS-universal.dmg
+          cp 'dist/宇伴.dmg' "$output/$asset"
+          hdiutil verify "$output/$asset"
+          hdiutil attach -nobrowse -readonly -mountpoint "$extracted" "$output/$asset"
+          mounted="$extracted"
+          app="$extracted/宇伴.app"
+          codesign --verify --deep --strict "$app"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/$executable"
+          smoke_start "$app/Contents/MacOS/$executable"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-macos
+          path: ${{ runner.temp }}/packages/*
+          if-no-files-found: error
+          retention-days: 3
+
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Package and verify Windows x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'yuban-build'
+          $archive = Join-Path $env:RUNNER_TEMP 'Yuban-Windows-x64.zip'
+          $extracted = Join-Path $env:RUNNER_TEMP 'yuban-extracted'
+          dotnet publish windows/Yuban.Windows.csproj -c Release -r win-x64 --self-contained true -o $stage
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
+          Expand-Archive -Path $archive -DestinationPath $extracted
+          $executable = Join-Path $extracted 'Yuban.exe'
+          $selfTest = Start-Process $executable -ArgumentList '--self-test' -PassThru
+          if (!$selfTest.WaitForExit(30000)) {
+            $selfTest.Kill()
+            throw 'Packaged Windows self-test timed out'
+          }
+          if ($selfTest.ExitCode -ne 0) { throw 'Packaged Windows self-test failed' }
+          $app = Start-Process $executable -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(25)
+            do {
+              Start-Sleep -Milliseconds 250
+              $app.Refresh()
+            } until ($app.HasExited -or $app.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
+            if ($app.HasExited -or $app.MainWindowHandle -eq 0) { throw 'Application did not open a window' }
+          } finally {
+            if (!$app.HasExited) { Stop-Process -Id $app.Id }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-windows
+          path: ${{ runner.temp }}/Yuban-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: packages
+      - name: Publish a release for this source snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo 'A newer source snapshot is already queued.'
+            exit 0
+          fi
+          cd packages
+          shopt -s nullglob
+          files=(*.zip *.dmg)
+          test "${#files[@]}" -eq 2
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          tag="public-${GITHUB_SHA:0:12}"
+          notes='此版本由当前公开源码构建。macOS 应用使用临时签名，尚未通过 Apple 公证。请核对 SHA256SUMS.txt。'
+          if draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" == true ]]; then
+              gh release upload "$tag" "${files[@]}" SHA256SUMS.txt --clobber -R "$GITHUB_REPOSITORY"
+              gh release edit "$tag" --draft=false --latest -R "$GITHUB_REPOSITORY"
+            fi
+          else
+            gh release create "$tag" "${files[@]}" SHA256SUMS.txt --target "$GITHUB_SHA" \
+              --title "宇伴 · $tag" --notes "$notes" --latest -R "$GITHUB_REPOSITORY"
+          fi
