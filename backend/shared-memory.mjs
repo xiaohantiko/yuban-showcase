@@ -75,6 +75,19 @@ export function validateSharedMemoryDetails(details, messages) {
   });
 }
 
+// Require the same named activity and an explicitly retired nickname before replacing a memory.
+function sharedAlias(text) {
+  return /(?:我们|咱们|我俩)(?:就)?把([^，。！？,!?；;]{1,24}?)(?:称作|叫作|叫做|叫)([^，。！？,!?；;]{1,20})/u.exec(text);
+}
+
+function explicitAliasCorrection(text) {
+  const alias = sharedAlias(text);
+  if (!alias) return null;
+  const retired = /^[，,]\s*([^，。！？,!?；;]{1,20}?)(?:这个(?:说法|名字|叫法|暗号))?(?:作废|不用了|不再用)/u.exec(text.slice(alias.index + alias[0].length));
+  if (!retired || evidenceKey(alias[2]) === evidenceKey(retired[1])) return null;
+  return { subject: normalized(alias[1]), retired: evidenceKey(retired[1]), evidence: alias[0] };
+}
+
 export function extractSharedMemory(text) {
   if (typeof text !== 'string' || !safeSource(text)) return [];
   const candidates = [];
@@ -84,7 +97,7 @@ export function extractSharedMemory(text) {
     const evidence = part.trim();
     if (!isSharedMemoryEvidence(evidence)) continue;
     const [kind] = kindsIn(evidence);
-    if (kind) candidates.push({ kind, evidence });
+    if (kind) candidates.push({ kind, evidence: kind === 'inside-joke' ? explicitAliasCorrection(evidence)?.evidence ?? evidence : evidence });
     if (candidates.length === MAX_CANDIDATES) break;
   }
   return candidates;
@@ -132,6 +145,17 @@ export function rememberSharedMemory(memory, detail, sourceText, at, renew = fal
   const shared = memory.shared ?? { moments: [], forgotten: [], nextId: 1 };
   if (shared.forgotten.some(item => item.key === fingerprint || item.source === source || item.lastSource === source)) return;
 
+  if (renew && detail.kind === 'inside-joke') {
+    const correction = explicitAliasCorrection(sourceText);
+    if (correction && correction.evidence === detail.evidence) {
+      for (const moment of [...shared.moments]) {
+        const alias = moment.kind === 'inside-joke' && sharedAlias(moment.evidence);
+        if (alias && moment.at <= at && normalized(alias[1]) === correction.subject && evidenceKey(alias[2]) === correction.retired) {
+          forgetSharedMemory(memory, moment.id);
+        }
+      }
+    }
+  }
   const existing = shared.moments.find(moment => {
     const oldKey = evidenceKey(moment.evidence);
     return oldKey === key || (moment.kind === detail.kind && Math.min(oldKey.length, key.length) >= 5

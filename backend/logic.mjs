@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { companionGreeting, validGreeting } from './companion.mjs';
 import { boundedChatContext, MAX_STORED_MESSAGES } from './history.mjs';
+import { dshPluginIDs, selectedPlugins } from './plugin-capabilities.mjs';
 
 export const defaultSettings = Object.freeze({
   enabled: true, afterMinutes: 360, quietEnabled: true, quietStart: '23:00', quietEnd: '08:00',
   timeZone: 'Asia/Shanghai', voiceReplies: false,
   companionName: '', companionPersona: '', memoryEnabled: true,
   dshPlugins: Object.freeze([]),
+  dshChainManaged: false,
 });
 export const newThread = () => ({ messages: [], lastUserAt: null, attemptedFor: null, optedIn: false, target: null });
 export const newMessage = (role, text, options = {}) => ({
@@ -20,10 +22,12 @@ export function addMessage(thread, message) {
 }
 
 const validTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const dshPluginIDs = new Set(['agent-md', 'remember', 'memory', 'chain']);
+const validDshPlugins = new Set(dshPluginIDs);
 export function readSettings(current) {
   const settings = { ...defaultSettings, ...current };
   delete settings.companionStyle;
+  settings.dshPlugins = selectedPlugins(settings);
+  settings.dshChainManaged = settings.dshChainManaged === true || settings.dshPlugins?.includes('chain') === true;
   return settings;
 }
 
@@ -31,11 +35,12 @@ export function mergeSettings(current, input) {
   const next = readSettings(current);
   if ('dshPlugins' in input) {
     const plugins = input.dshPlugins;
-    if (!Array.isArray(plugins) || plugins.length > dshPluginIDs.size
-        || [...plugins].some((id) => !dshPluginIDs.has(id)) || new Set(plugins).size !== plugins.length) {
+    if (!Array.isArray(plugins) || plugins.length > validDshPlugins.size
+        || [...plugins].some((id) => !validDshPlugins.has(id)) || new Set(plugins).size !== plugins.length) {
       throw new Error('请选择有效且不重复的 DSH 插件');
     }
-    // A plan only. Runtime installation and permission use separate settings.
+    // Keep old independently authorized tools working until this item is explicitly managed.
+    if (plugins.includes('chain') || next.dshPlugins.includes('chain')) next.dshChainManaged = true;
     next.dshPlugins = [...plugins];
   }
   if ('companionName' in input) {

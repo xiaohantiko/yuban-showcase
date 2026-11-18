@@ -12,7 +12,7 @@ export async function replyToOwner({ providers, settings, messages, text, memory
   const learning = remember ? startMemoryLearning(observed, { ...memoryOptions, text: input, messages, providers, at }) : { memory: observed };
   const reply = createReply(providers, settings, messages, text, {
     at, ownerName, ...(searching ? { mode: 'search' } : {}),
-    memoryContext: remember ? memoryContextFor(observed, { ...memoryOptions, query: input }) : undefined,
+    memoryContext: remember ? memoryContextFor(learning.memory, { ...memoryOptions, query: input }) : undefined,
   });
   // Start the occasional classifier alongside the reply, but delivery never awaits it.
   const completion = learning.completion ? Promise.resolve().then(learning.completion).catch(() => null) : null;

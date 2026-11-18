@@ -8,6 +8,7 @@
   <title>宇伴 · QQ AI 陪伴中转站</title>
   <link rel="stylesheet" href="/styles.css">
   <script defer src="/model-catalog.js"></script>
+  <script defer src="/dsh-catalog.js"></script>
   <script defer src="/dsh-portable.js"></script>
   <script defer src="/app.js"></script>
 </head>
@@ -100,9 +101,10 @@
                   <label for="setup-provider">AI 服务商</label><select id="setup-provider" required></select>
                   <label for="setup-preset-model" id="setup-preset-label" hidden>模型</label><select id="setup-preset-model" hidden disabled></select>
                   <small id="setup-model-description"></small>
+                  <a id="setup-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a>
                   <div id="setup-custom-model" class="setup-custom" hidden><label for="setup-base">接口地址</label><input id="setup-base" type="url" placeholder="https://example.com/v1"><label for="setup-model-id">模型 ID</label><input id="setup-model-id" type="text" maxlength="160" placeholder="服务商提供的模型名称"><small>自定义地址需先由部署者在云端允许。</small></div>
                   <label for="setup-model-key">API 密钥</label><input id="setup-model-key" type="password" required maxlength="1024" placeholder="粘贴服务商提供的密钥" spellcheck="false" autocomplete="off">
-                  <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noreferrer">去服务商查看密钥说明</a></div>
+                  <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noopener noreferrer">查看接口文档</a></div>
                 </fieldset>
               </form>
               <p class="setup-feedback" id="setup-model-feedback" aria-live="polite"></p>
@@ -168,33 +170,35 @@
     </section>
 
     <section class="page subpage" id="ai" hidden>
-      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-code"/></svg> 模型与调用</span><h1>高级接入</h1><p>在这里管理模型和对外接口。只想接上 QQ，可以回到「开始使用」。</p></div>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-code"/></svg> 模型与调用</span><h1>高级接入</h1><p>在这里管理便携插件、模型和对外接口。只想接上 QQ，可以回到「开始使用」。</p></div>
       <section class="card ai-card model-card" aria-labelledby="ai-model-title">
         <div class="card-title"><h2 id="ai-model-title">可接入模型</h2><span class="badge neutral" id="ai-model-status">读取中</span></div>
         <p id="active-model">选择一个模型查看配置。模型密钥只填在云端。</p>
         <ul class="model-options" id="model-options" aria-label="可查看的模型配置"></ul>
         <div class="model-detail" id="model-detail" hidden>
-          <div class="model-detail-head"><p id="model-note"></p><a class="link" id="model-docs" href="https://developers.openai.com/" target="_blank" rel="noreferrer">官方文档 <svg><use href="#i-chevron"/></svg></a></div>
+          <div class="model-detail-head"><p id="model-note"></p><a class="link" id="model-portal" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a><a class="link" id="model-docs" href="https://developers.openai.com/" target="_blank" rel="noreferrer">官方文档 <svg><use href="#i-chevron"/></svg></a></div>
           <pre class="model-config" id="model-config"></pre>
           <div class="model-detail-foot"><span>复制后填到云端，再设置服务商的 <code>AI_API_KEY</code>。</span><button type="button" class="button subtle" id="copy-model"><svg><use href="#i-copy"/></svg>复制配置</button></div>
         </div>
         <p class="model-more">也支持自定义服务：填入兼容 Chat Completions 的 API 根地址和模型 ID。</p>
       </section>
-      <section hidden class="card ai-card" aria-labelledby="dsh-title">
-        <div class="card-title"><h2 id="dsh-title">DSH 插件</h2><span class="badge neutral" id="dsh-status">待配置</span></div>
-        <p>授权的 QQ 单聊可以调用你允许的 DeepSeek Harness 工具。宇伴只把你在命令里写的参数交给工具。</p>
-        <pre class="model-config">插件 &lt;工具别名&gt; {"参数":"值"}</pre>
+      <section class="card ai-card" aria-labelledby="dsh-title">
+        <div class="card-title"><h2 id="dsh-title">便携插件</h2><span class="badge neutral" id="dsh-status">待配置</span></div>
+        <p>为当前账号添加便携能力，导入人设或选中的记忆，确认保存后用于聊天。</p>
         <p id="dsh-tools" hidden></p>
-        <div class="dsh-catalog-head"><h3>可添加插件</h3><span class="badge neutral" id="dsh-plan-status" aria-live="polite">未添加</span></div>
-        <p class="dsh-help">可复制部署步骤，也可以到<a class="link" href="#persona">「人设与记忆」</a>导入想带给 GPT 的内容。</p>
+        <div class="dsh-catalog-head"><h3>正在使用</h3><span class="badge neutral" id="dsh-plan-status" aria-live="polite">未添加</span></div>
+        <p class="dsh-help">这里使用宇伴的兼容能力，不会自动安装原生 DSH 插件。导入的人设保存后用于聊天；记忆需先在本人绑定的 QQ 开启。移除后会保留已保存的人设和记忆。</p>
+        <p class="dsh-help" id="dsh-active-empty">还没有添加插件。可以从下方选择。</p>
+        <ul class="dsh-options dsh-active" id="dsh-active" aria-label="正在使用的插件"></ul>
+        <div class="dsh-catalog-head"><h3>可添加插件</h3></div>
         <ul class="dsh-options" id="dsh-options" aria-label="DSH 插件选项"></ul>
         <details class="ai-example" id="dsh-plan" hidden>
-          <summary>查看已添加插件的安装清单</summary>
+          <summary>查看原生 DSH 的可选安装步骤</summary>
           <p id="dsh-plan-conflict" hidden>dsh-remember 与 dsh-plugin-memory 使用同一注册名。请给命令里的两个变量填入不同且已存在的 DSH profile 名，再分别安装。</p>
           <pre class="model-config" id="dsh-plan-text"></pre>
           <button class="button subtle" id="copy-dsh-plan" type="button"><svg><use href="#i-copy"/></svg>复制安装清单</button>
         </details>
-        <details class="ai-example"><summary>查看接入方式</summary><p>在运行 DSH 的云服务器安装宇伴网关插件，再配置网关地址、密钥、允许调用的 QQ 标识和工具别名。在 QQ 单聊发 <code>插件身份</code> 可查看本账号的接入标识。</p></details>
+        <details hidden class="ai-example" id="dsh-connection-guide"><summary>便携内容导入</summary><p>公开框架支持人设与记忆导入。</p></details>
       </section>
       <section hidden class="card ai-card" aria-labelledby="gpt-actions-title">
         <div class="card-title"><h2 id="gpt-actions-title">让自定义 GPT 查插件记忆</h2><span class="badge neutral" id="gpt-actions-status">待连接云端</span></div>
@@ -224,8 +228,13 @@
         <section class="card ai-card" aria-labelledby="companion-title">
           <div class="card-title"><h2 id="companion-title">自定义人设</h2></div>
           <div class="persona-fields">
-            <label for="companion-name"><strong>陪伴昵称</strong><small>留空时沿用云端设置的名字，默认小宇。</small></label>
+            <label for="companion-name"><strong>陪伴昵称</strong><small>保存后用于这个账号接下来的 QQ 对话。留空时沿用云端默认昵称。</small></label>
             <input id="companion-name" name="companionName" maxlength="20" placeholder="小宇" autocomplete="off">
+            <details class="persona-writing" id="qq-name-guide">
+              <summary>QQ 好友列表也想显示这个名字？</summary>
+              <p>登录后，在「我的机器人」找到对应的机器人，点「编辑」粘贴名称并确认。QQ 会按平台规则更新资料。</p>
+              <div class="setup-actions"><code id="qq-profile-name"></code><button class="button subtle" type="button" id="copy-qq-profile-name" disabled>复制已保存昵称</button><a class="link" href="https://q.qq.com/qqbot/openclaw/" target="_blank" rel="noopener noreferrer">打开 QQ 开放平台</a></div>
+            </details>
             <label for="companion-persona"><strong>你想怎样相处</strong><small>可以随时修改，也可以留空。</small></label>
             <textarea id="companion-persona" name="companionPersona" maxlength="1000" rows="5" placeholder="用你自己的话写下关系、说话方式和相处边界。" aria-describedby="persona-count"></textarea>
             <div class="persona-field-footer"><button type="button" class="link" id="import-persona">导入 AGENT.md 或 SOUL.md <svg><use href="#i-chevron"/></svg></button><span class="persona-count" id="persona-count">0 / 1000</span></div>
@@ -279,6 +288,14 @@
           </div>
           <span class="badge neutral" id="usage-key"></span>
         </section>
+        <section class="card usage-current" aria-labelledby="balance-title">
+          <div>
+            <h2 id="balance-title">API 余额</h2>
+            <p class="usage-current-model" id="balance-amount"></p>
+            <p class="usage-current-provider" id="balance-details" role="status">正在读取余额…</p>
+          </div>
+          <a id="balance-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a>
+        </section>
         <div class="usage-periods">
           <section class="card usage-period" aria-labelledby="usage-today-title"><h2 id="usage-today-title">今天</h2><dl class="usage-kpis" id="usage-today"></dl></section>
           <section class="card usage-period" aria-labelledby="usage-month-title"><h2 id="usage-month-title">近 30 天</h2><dl class="usage-kpis" id="usage-month"></dl></section>
@@ -300,7 +317,7 @@
       <section class="card ai-card" aria-labelledby="help-start-title"><div class="card-title"><h2 id="help-start-title">先准备这三样</h2></div><ol class="guide-steps"><li><strong>宇伴云端网址。</strong>还没有的话，先部署一次，把部署后的 HTTPS 网址和管理口令拿到手。<a href="https://github.com/xiaohantiko/yuban-showcase#本地运行" target="_blank" rel="noreferrer">查看部署说明</a>。</li><li><strong>任意一家 AI 的 API 密钥。</strong>有哪家的就选哪家；不需要为其他模型注册账号。宇伴会用它测试一条很短的回复。</li><li><strong>一个 QQ 机器人。</strong>到 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台</a>创建，找到 AppID 和 ClientSecret，回宇伴按提示验证、复制回调地址。</li></ol><a class="button primary" href="#overview">回到三步向导</a></section>
       <section class="card ai-card" aria-labelledby="help-owner-title"><div class="card-title"><h2 id="help-owner-title">第一次私聊，先认领主人</h2></div><ol class="guide-steps"><li>在「开始使用 → 连接 QQ → 认领主人」填一个可选称呼，点击「生成认领码」。</li><li>复制整条认领消息，用你自己的 QQ 在机器人私聊里发送。认领码 10 分钟内有效，只能用一次。</li><li>看到认领成功的回复，就可以开始聊天。之后可在 QQ 私聊发「叫我 小韩」修改称呼。</li></ol><p class="import-help">宇伴会绑定发出有效认领码的 QQ 账号。别人先发消息，或说「我是你主人」，都不会改变身份。</p></section>
       <section class="card ai-card" aria-labelledby="help-chat-title"><div class="card-title"><h2 id="help-chat-title">认领后，直接在 QQ 发消息</h2></div><dl class="guide-examples"><div><dt>「今天有点累，想说说话」</dt><dd>开始陪伴聊天。</dd></div><div><dt>「帮我查一下极光怎么形成」</dt><dd>查资料并返回来源。</dd></div><div><dt>「用语音回复：给我讲个故事」</dt><dd>配置语音服务后可用。</dd></div><div><dt>「开启记忆」或「开启问候」</dt><dd>分别打开相处记忆和主动问候，随时能关。</dd></div></dl></section>
-      <section class="card ai-card" aria-labelledby="help-extra-title"><div class="card-title"><h2 id="help-extra-title">碰到问题时</h2></div><details class="ai-example"><summary>只想试试，需要部署吗？</summary><p>可以离线写人设和查看安装清单。QQ 收发和主动问候需要部署。</p></details><details class="ai-example"><summary>为什么已经填了机器人，QQ 还是没回复？</summary><p>先检查向导里的回调状态，再确认 QQ 平台订阅了单聊消息。发一条测试后，到<a href="#activity">运行记录</a>看收发结果。</p></details><details class="ai-example"><summary>我在用 GPT，原来的 DSH 插件怎么用？</summary><p>在「人设与记忆」导入 AGENT.md、SOUL.md 或挑选记忆摘要，GPT 模型就能使用这些内容。想让自定义 GPT 查询 dsh-chain，去<a href="#ai">高级接入</a>配置只读工具。</p></details></section>
+      <section class="card ai-card" aria-labelledby="help-extra-title"><div class="card-title"><h2 id="help-extra-title">碰到问题时</h2></div><details class="ai-example"><summary>只想试试，需要部署吗？</summary><p>可以离线写人设和查看安装清单。QQ 收发和主动问候需要部署。</p></details><details class="ai-example"><summary>为什么已经填了机器人，QQ 还是没回复？</summary><p>先检查向导里的回调状态，再确认 QQ 平台订阅了单聊消息。发一条测试后，到<a href="#activity">运行记录</a>看收发结果。</p></details><details class="ai-example"><summary>我在用 GPT，原来的 DSH 插件怎么用？</summary><p>在「人设与记忆」导入 AGENT.md、SOUL.md 或挑选记忆摘要，GPT 模型就能使用这些内容。添加便携插件后，按提示选择内容并确认保存。</p></details></section>
     </section>
 
     <section class="page subpage" id="feedback" aria-labelledby="member-feedback-title" hidden>
@@ -336,7 +353,7 @@
     <label class="file-label" for="dsh-import-file">选择 Markdown 文件</label><input type="file" id="dsh-import-file" accept=".md,.markdown,.txt,text/plain,text/markdown">
     <label class="import-paste" for="dsh-import-text">也可以直接粘贴文本</label><textarea id="dsh-import-text" rows="5" maxlength="30000"></textarea>
     <p class="setup-feedback" id="dsh-import-result" aria-live="polite"></p>
-    <div id="dsh-memory-preview" class="dsh-memory-preview" hidden><p>勾选想留下的内容。在 QQ 单聊开启记忆后，逐条发送生成的命令。</p><fieldset id="dsh-memory-candidates" aria-label="选择要保留的记忆"></fieldset><pre class="model-config" id="dsh-memory-commands"></pre><button type="button" class="button subtle" id="copy-memory-commands" disabled>复制记忆命令</button></div>
+    <div id="dsh-memory-preview" class="dsh-memory-preview" hidden><p>勾选并确认后，可存入本账号已开启的 QQ 记忆；也可以复制命令，在 QQ 单聊逐条发送。</p><fieldset id="dsh-memory-candidates" aria-label="选择要保留的记忆"></fieldset><pre class="model-config" id="dsh-memory-commands"></pre><div class="setup-actions"><button type="button" class="button primary" id="save-memory-import" disabled>存入本账号 QQ 记忆</button><button type="button" class="button subtle" id="copy-memory-commands" disabled>复制记忆命令</button></div><p class="setup-feedback" id="save-memory-import-feedback" aria-live="polite"></p></div>
     <div class="dialog-actions"><button class="button subtle" id="cancel-dsh-import" type="button">取消</button><button class="button primary" id="apply-dsh-import" type="button">预览</button></div>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>

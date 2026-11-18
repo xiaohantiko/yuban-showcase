@@ -35,6 +35,10 @@ let ownerRequestId = 0;
 let ownerExpiryTimer;
 let importMode = 'persona';
 let importedPersona = null;
+let importedMemoryCandidates = [];
+let importPluginId = null;
+let memoryImportSaving = false;
+let memoryImportRequestId = 0;
 let importFileId = 0;
 let redirectingToLogin = false;
 let usageRequestId = 0;
@@ -115,13 +119,14 @@ async function copyAddress(id, message) {
 }
 function renderModelCatalog() {
   if (typeof MODEL_CATALOG === 'undefined' || !MODEL_CATALOG.length) return;
-  const models = MODEL_CATALOG.flatMap(({ base, docs, models }) => models.map((item) => ({ base, docs, ...item })));
+  const models = MODEL_CATALOG.flatMap((provider) => provider.models.map((item) => ({ base: provider.base, docs: provider.docs, ...item, provider })));
   const list = $('model-options');
   const buttons = [];
   function show(index) {
     const item = models[index];
     buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)));
     $('model-note').textContent = item.note;
+    setProviderPortal($('model-portal'), item.provider);
     $('model-docs').href = item.docs;
     $('model-docs').setAttribute('aria-label', `${item.name} 官方文档`);
     $('model-config').textContent = `AI_BASE_URL=${item.base}\nAI_MODEL=${item.model}`;
@@ -164,17 +169,59 @@ async function copyCodeBlock(id, message) {
 function selectedDshPlugins() {
   return Array.isArray(state?.settings.dshPlugins) ? state.settings.dshPlugins : [];
 }
+function renderActiveDshPlugins(entries) {
+  const statuses = new Map((state?.services?.dsh?.plugins ?? []).map(item => [item.id, item]));
+  const labels = { ready: '可使用', 'needs-content': '待导入内容', 'needs-memory': '待 QQ 开启记忆', 'needs-setup': '待配置网关', paused: '记忆已暂停' };
+  const rows = entries.map(item => {
+    const row = document.createElement('li');
+    const copy = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = item.name;
+    const detail = document.createElement('p');
+    detail.textContent = item.id === 'chain'
+      ? '授权后可在 QQ 用 chain_about 只读查询。移除后停止由此项管理的聊天查询。'
+      : item.id === 'agent-md' ? 'AGENT.md 人设导入，确认保存后用于当前账号的聊天。'
+        : item.id === 'remember' ? '挑选摘要，确认后存入本人绑定 QQ 的记忆。'
+          : 'SOUL.md 人设与摘要记忆，可分别确认导入。';
+    const status = document.createElement('span');
+    const projected = statuses.get(item.id)?.status;
+    status.className = `badge ${projected === 'ready' ? 'success' : 'neutral'}`;
+    status.textContent = item.id === 'chain' && projected === 'ready' ? '网关已配置'
+      : labels[projected] ?? (item.id === 'chain' ? '待确认网关' : '兼容导入');
+    const actions = document.createElement('div');
+    actions.className = 'dsh-plugin-actions';
+    function action(label, callback) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'button subtle'; button.textContent = label;
+      button.disabled = !state || dshSaving;
+      button.addEventListener('click', callback); actions.append(button);
+    }
+    if (['agent-md', 'memory'].includes(item.id)) action('导入人设', () => openImport('persona', item.id));
+    if (['remember', 'memory'].includes(item.id)) action('挑选记忆', () => openImport('memory', item.id));
+    if (item.id === 'chain') action('配置接入', () => {
+      $('dsh-connection-guide').open = true;
+      $('dsh-connection-guide').scrollIntoView({ block: 'nearest' });
+    });
+    action('移除', () => toggleDshPlugin(item.id));
+    actions.lastChild.setAttribute('aria-label', `移除 ${item.name}`);
+    copy.append(title, detail, status); row.append(copy, actions);
+    return row;
+  });
+  $('dsh-active').replaceChildren(...rows);
+  $('dsh-active-empty').hidden = entries.length > 0;
+}
 function renderDshPlan() {
   const selected = selectedDshPlugins();
   for (const [id, button] of dshButtons) {
     const added = selected.includes(id);
-    button.textContent = added ? '移出清单' : '添加';
+    button.textContent = added ? '正在使用' : '添加';
     button.setAttribute('aria-pressed', String(added));
-    button.setAttribute('aria-label', `${added ? '从清单移除' : '添加'} ${button.dataset.pluginName}`);
-    button.disabled = !state || dshSaving;
+    button.setAttribute('aria-label', `${added ? '正在使用' : '添加'} ${button.dataset.pluginName}`);
+    button.disabled = added || !state || dshSaving;
   }
   $('dsh-plan-status').textContent = selected.length ? `已添加 ${selected.length} 项` : '未添加';
   const entries = typeof DSH_PLUGIN_CATALOG === 'undefined' ? [] : selected.flatMap((id) => DSH_PLUGIN_CATALOG.filter((item) => item.id === id));
+  renderActiveDshPlugins(entries);
   $('dsh-plan').hidden = !entries.length;
   const separatesMemoryProfiles = selected.includes('remember') && selected.includes('memory');
   $('dsh-plan-conflict').hidden = !separatesMemoryProfiles;
@@ -193,7 +240,7 @@ async function toggleDshPlugin(id) {
   renderDshPlan();
   try {
     render(await request('/api/settings', 'PATCH', { dshPlugins: next }));
-    toast(added ? '已移出安装清单' : '已添加到安装清单');
+    toast(added ? '已移除，已保存的人设和记忆会保留' : '已添加到正在使用，请按提示完成设置');
   } catch (err) { toast(err.message); }
   finally { dshSaving = false; renderDshPlan(); }
 }
@@ -250,6 +297,8 @@ function renderCompanion() {
     $('companion-persona').value = saved.companionPersona;
     $('memory-enabled').checked = saved.memoryEnabled;
   }
+  $('qq-profile-name').textContent = saved.companionName;
+  $('copy-qq-profile-name').disabled = !saved.companionName;
   const choice = currentCompanionConfig();
   $('persona-count').textContent = `${$('companion-persona').value.length} / 1000`;
   $('save-companion').disabled = !state || sameCompanionConfig(choice, saved) || companionSaving;
@@ -269,12 +318,31 @@ function setupSelectedProvider() {
   const value = $('setup-provider').value;
   return typeof MODEL_CATALOG === 'undefined' ? undefined : MODEL_CATALOG.find((provider) => provider.id === value);
 }
+function setProviderPortal(link, provider, baseUrl) {
+  let href = provider?.portal;
+  if (!href && baseUrl) {
+    try {
+      const url = new URL(baseUrl);
+      if (url.protocol === 'https:' && !url.username && !url.password) href = url.origin;
+    } catch { /* A partially entered address has no destination yet. */ }
+  }
+  link.hidden = !href;
+  if (href) {
+    link.href = href;
+    link.textContent = provider ? `打开 ${provider.name} API 平台` : '打开自定义 API 网站';
+  } else link.removeAttribute('href');
+}
 function renderSetupModelDescription() {
   const provider = setupSelectedProvider();
   const preset = provider?.models.find(({ model }) => model === $('setup-preset-model').value);
   const note = $('setup-model-description');
   note.textContent = preset?.note ?? '';
   note.hidden = !preset?.note;
+  setProviderPortal($('setup-provider-portal'), provider, provider ? null : $('setup-base').value.trim());
+  const docs = $('setup-provider-docs');
+  docs.hidden = !provider;
+  if (provider) docs.href = preset?.docs ?? provider.docs;
+  else docs.removeAttribute('href');
 }
 function renderSetupProvider() {
   const provider = setupSelectedProvider();
@@ -293,8 +361,6 @@ function renderSetupProvider() {
     $(id).required = custom;
     $(id).disabled = !custom;
   }
-  $('setup-provider-docs').hidden = !provider;
-  if (provider) $('setup-provider-docs').href = provider.docs;
   $('setup-provider-voice').textContent = provider?.voiceNote ?? '语音服务须支持 POST /audio/speech，并直接返回音频。对话和语音可以分别选服务商。';
   const voiceDocs = $('setup-provider-voice-docs');
   voiceDocs.hidden = !provider?.voiceDocs;
@@ -316,6 +382,7 @@ function restoreSetupModel(model) {
   } else {
     $('setup-base').value = savedBase ?? '';
     $('setup-model-id').value = model.model;
+    renderSetupModelDescription();
   }
 }
 function initializeSetup() {
@@ -326,6 +393,7 @@ function initializeSetup() {
     }
   }
   picker.add(new Option('其他服务商', 'custom'));
+  if (typeof MODEL_CATALOG !== 'undefined' && MODEL_CATALOG.some((provider) => provider.id === 'deepseek')) picker.value = 'deepseek';
   renderSetupProvider();
   $('setup-connect').hidden = !desktopPreview;
 }
@@ -455,22 +523,29 @@ async function saveSetup(kind, payload) {
 }
 function clearImportPreview() {
   importedPersona = null;
+  importedMemoryCandidates = [];
+  memoryImportRequestId++;
+  memoryImportSaving = false;
   $('apply-dsh-import').textContent = '预览';
   $('dsh-memory-preview').hidden = true;
   $('dsh-memory-candidates').replaceChildren();
   $('dsh-memory-commands').textContent = '';
   $('copy-memory-commands').disabled = true;
+  $('save-memory-import').disabled = true;
+  feedback('save-memory-import-feedback', '');
   feedback('dsh-import-result', '');
 }
-function openImport(mode) {
+function openImport(mode, plugin) {
   importMode = mode;
+  importPluginId = selectedDshPlugins().includes(plugin) ? plugin
+    : mode === 'memory' ? selectedDshPlugins().find(id => ['remember', 'memory'].includes(id)) ?? null : null;
   $('dsh-import-file').value = '';
   $('dsh-import-text').value = '';
   clearImportPreview();
   $('dsh-import-title').textContent = mode === 'persona' ? '导入人设' : '挑选相处记忆';
   $('dsh-import-help').textContent = mode === 'persona'
     ? '选择 AGENT.md 或 SOUL.md，或粘贴想保留的段落。预览后才会填到人设编辑框。'
-    : '选择 memory_summary.md、MEMORY.md 或粘贴摘要。内容只在这里预览，不会自动写入聊天。';
+    : '选择 memory_summary.md、MEMORY.md 或粘贴摘要。先预览勾选，再确认存入本人 QQ 记忆，不会自动保存。';
   $('dsh-import-dialog').showModal();
 }
 function previewImport() {
@@ -480,6 +555,7 @@ function previewImport() {
     companionDirty = true;
     renderCompanion();
     $('dsh-import-dialog').close();
+    location.hash = 'persona';
     $('companion-persona').focus();
     toast('已填入编辑框，确认后保存人设');
     return;
@@ -500,18 +576,21 @@ function previewImport() {
   const result = DSH_PORTABLE.parseMemory(source);
   if (!result.candidates.length) return feedback('dsh-import-result', '没有找到可选的简短记忆。可以粘贴几行日常偏好重试。', 'error');
   const fields = $('dsh-memory-candidates');
+  importedMemoryCandidates = result.candidates;
   const choices = [];
   const update = () => {
     const commands = choices.filter(([check]) => check.checked).map(([, item]) => item.command);
     $('dsh-memory-commands').textContent = commands.join('\n');
     $('copy-memory-commands').disabled = !commands.length;
+    $('save-memory-import').disabled = !commands.length || !importPluginId || desktopPreview || memoryImportSaving;
   };
   fields.replaceChildren();
-  for (const item of result.candidates) {
+  for (const [index, item] of result.candidates.entries()) {
     const label = document.createElement('label');
     const input = document.createElement('input');
     const text = document.createElement('span');
     input.type = 'checkbox';
+    input.value = String(index);
     text.textContent = item.text;
     label.append(input, text);
     fields.append(label);
@@ -520,7 +599,33 @@ function previewImport() {
   }
   $('dsh-memory-preview').hidden = false;
   update();
+  feedback('save-memory-import-feedback', !importPluginId
+    ? '先在高级接入添加记忆插件，才可直接存入；也可以复制命令到 QQ 发送。' : '只会保存你勾选并确认的内容。QQ 尚未开启记忆时，会提示你先确认。');
   feedback('dsh-import-result', `找到 ${result.candidates.length} 条可选记忆。${result.skipped || result.capped ? '较长、重复或含隐私风险的内容已跳过，仍请检查每一条。' : '请确认你愿意把它们保留在自己的 QQ 对话里。'}`);
+}
+async function saveImportedMemory() {
+  if (memoryImportSaving || !importPluginId || desktopPreview) return;
+  const notes = [...$('dsh-memory-candidates').querySelectorAll('input:checked')]
+    .map(input => importedMemoryCandidates[Number(input.value)]?.text).filter(Boolean);
+  if (!notes.length) return;
+  const requestId = ++memoryImportRequestId;
+  memoryImportSaving = true;
+  $('save-memory-import').disabled = true;
+  feedback('save-memory-import-feedback', '正在保存你选中的记忆…');
+  try {
+    const result = await request('/api/plugins/memory/import', 'POST', { plugin: importPluginId, notes });
+    if (requestId !== memoryImportRequestId) return;
+    feedback('save-memory-import-feedback', `已存入 ${result.added} 条，已存在的 ${result.duplicates} 条已跳过。可在 QQ 发「查看记忆」核对。`, 'success');
+    await refresh();
+  } catch (error) {
+    if (requestId === memoryImportRequestId) feedback('save-memory-import-feedback', error.status === 404
+      ? '当前部署暂未提供直接导入。可复制记忆命令，在本人 QQ 单聊发送。' : error.message, 'error');
+  } finally {
+    if (requestId === memoryImportRequestId) {
+      memoryImportSaving = false;
+      $('save-memory-import').disabled = ![...$('dsh-memory-candidates').querySelectorAll('input:checked')].length;
+    }
+  }
 }
 function activeRoute() {
   const key = location.hash.slice(1);
@@ -836,13 +941,15 @@ function usageRow(label, counters, { date, provider } = {}) {
   }
   return row;
 }
-function renderUsage(snapshot) {
+function renderUsage(snapshot, customBase) {
   const { today, last30Days, byDay, byModel, current, trackingSince } = snapshot;
   if (!isUsageCount(today?.requests) || !isUsageCount(last30Days?.requests) || !Array.isArray(byDay) || !Array.isArray(byModel)) {
     throw new Error('无法读取用量记录');
   }
   const model = typeof current?.model === 'string' ? current.model : '';
   const providerName = usageProviders.get(current?.provider);
+  const currentProvider = typeof MODEL_CATALOG === 'undefined' ? null : MODEL_CATALOG.find((provider) => provider.id === current?.provider);
+  setProviderPortal($('balance-provider-portal'), currentProvider, customBase);
   $('usage-current-model').textContent = model || '未配置模型';
   $('usage-current-provider').textContent = [providerName, current?.configured === false && model ? '模型未就绪' : ''].filter(Boolean).join(' · ');
   const keyStatus = current?.hasApiKey === true ? 'API 密钥已配置' : current?.hasApiKey === false ? 'API 密钥未配置' : 'API 密钥状态未知';
@@ -863,7 +970,43 @@ function renderUsage(snapshot) {
   else if (!hasUsageTokens(last30Days)) showDashboardStatus('usage-status', '已有模型请求，暂未取得服务商返回的 Token 数量。');
   else showDashboardStatus('usage-status', '用量已更新。', 'ready');
 }
-async function loadUsage() {
+async function loadBalance(refresh, stillCurrent) {
+  const amount = $('balance-amount');
+  const details = $('balance-details');
+  amount.textContent = '';
+  details.textContent = '正在读取余额…';
+  try {
+    let balance = refresh ? await request('/api/balance/refresh', 'POST', {}) : await request('/api/balance');
+    for (let attempt = 0; balance.refreshing && attempt < 5 && stillCurrent(); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (!stillCurrent()) return;
+      balance = await request('/api/balance');
+    }
+    if (!stillCurrent()) return;
+    if (balance.status === 'ok' && balance.currency === 'CNY' && typeof balance.totalBalance === 'string') {
+      amount.textContent = `¥${balance.totalBalance}`;
+      const notice = balance.low
+        ? (balance.notification?.notified ? '低于 5 元，已向绑定的 QQ 发出提醒。' : '低于 5 元。绑定的 QQ 可接收余额提醒。')
+        : '低于 5 元时提醒绑定的 QQ。';
+      const at = Number.isFinite(balance.checkedAt)
+        ? new Date(balance.checkedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '';
+      details.textContent = [notice, at && `查询于 ${at}（北京时间）`].filter(Boolean).join(' ');
+    } else {
+      const messages = {
+        unsupported: '当前接入方式请到服务商后台查看余额。',
+        unconfigured: '配置 DeepSeek 官方 API 后可查询人民币余额。',
+        'not-checked': '尚无余额记录，可点击上方「刷新」。',
+        unavailable: '暂时未取得人民币余额，可稍后刷新或到服务商后台查看。',
+      };
+      details.textContent = balance.refreshing ? '余额查询中，稍后可刷新。' : messages[balance.status] || messages.unavailable;
+    }
+  } catch (error) {
+    if (stillCurrent()) details.textContent = error.status === 404
+      ? '当前部署尚未提供余额查询。' : '暂时无法读取余额，稍后可刷新。';
+  }
+}
+
+async function loadUsage(refreshBalance = false) {
   if (activeRoute() !== 'usage' || redirectingToLogin) return;
   const requestId = ++usageRequestId;
   const stillCurrent = () => requestId === usageRequestId && activeRoute() === 'usage' && !redirectingToLogin;
@@ -882,7 +1025,16 @@ async function loadUsage() {
     }
     const account = accountUsername();
     const snapshot = await request('/api/usage');
-    if (stillCurrent() && accountUsername() === account) renderUsage(snapshot);
+    let customBase;
+    if (stillCurrent() && snapshot.current?.configured && ['compatible', 'kimi', 'other'].includes(snapshot.current.provider)) {
+      // Custom models need their saved URL to open the correct provider from a direct dashboard visit.
+      const setup = await request('/api/setup').catch(() => null);
+      if (setup?.model?.model === snapshot.current.model) customBase = setup.model.baseUrl;
+    }
+    if (stillCurrent() && accountUsername() === account) {
+      renderUsage(snapshot, customBase);
+      void loadBalance(refreshBalance === true, () => stillCurrent() && accountUsername() === account);
+    }
   } catch (error) {
     if (!stillCurrent()) return;
     if ([404, 405, 501].includes(error.status)) showDashboardStatus('usage-status', '此部署尚未提供用量看板。');
@@ -976,7 +1128,8 @@ function render(next) {
     : desktopPreview ? '下面是可接入的模型示例，连接云端后会显示当前配置。' : '尚未配置模型。选择一个模型查看接入方式。';
   renderCompanion();
   const dshConfigured = services.dsh?.configured === true;
-  badge('dsh-status', desktopPreview ? '待连接云端' : dshConfigured ? '已配置' : '未启用', dshConfigured ? 'success' : 'neutral');
+  const portableAdded = selectedDshPlugins().some(id => ['agent-md', 'remember', 'memory'].includes(id));
+  badge('dsh-status', desktopPreview ? '待连接云端' : portableAdded ? '已添加' : '未添加', portableAdded ? 'success' : 'neutral');
   const dshTools = Array.isArray(services.dsh?.tools) ? services.dsh.tools : [];
   $('dsh-tools').hidden = !dshConfigured || !dshTools.length;
   $('dsh-tools').textContent = `允许的工具：${dshTools.join('、')}`;
@@ -1054,6 +1207,7 @@ $('logout').addEventListener('click', async (event) => {
 $('copy-webhook').addEventListener('click', () => copyAddress('qq-url', location.protocol === 'https:' ? '已复制回调地址' : '已复制本地地址；QQ 接入需要公网 HTTPS'));
 $('copy-ai-url').addEventListener('click', () => copyAddress('ai-url', '已复制 AI 接口地址'));
 $('copy-gpt-schema').addEventListener('click', () => copyCodeBlock('gpt-schema-url', '已复制 GPT 架构网址'));
+$('copy-qq-profile-name').addEventListener('click', () => copyCodeBlock('qq-profile-name', '已复制陪伴昵称'));
 $('copy-model').addEventListener('click', () => copyCodeBlock('model-config', '已复制模型配置'));
 $('copy-dsh-plan').addEventListener('click', () => copyCodeBlock('dsh-plan-text', '已复制安装清单'));
 $('companion-settings').addEventListener('input', () => {
@@ -1106,10 +1260,17 @@ $('refresh').addEventListener('click', () => refresh(true));
 $('setup-connect').addEventListener('click', async () => {
   try { await request('/app/cloud-connection', 'POST'); } catch (err) { toast(err.message); }
 });
-$('setup-provider').addEventListener('change', () => { setupModelSelectionSet = true; renderSetupProvider(); });
+$('setup-provider').addEventListener('change', () => {
+  setupModelSelectionSet = true;
+  $('setup-model-key').value = '';
+  renderSetupProvider();
+});
 $('setup-preset-model').addEventListener('change', () => { setupModelSelectionSet = true; renderSetupModelDescription(); });
 for (const id of ['setup-base', 'setup-model-id', 'setup-model-key']) {
-  $(id).addEventListener('input', () => { setupModelSelectionSet = true; });
+  $(id).addEventListener('input', () => {
+    setupModelSelectionSet = true;
+    if (id === 'setup-base') renderSetupModelDescription();
+  });
 }
 $('setup-model-form').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1171,6 +1332,7 @@ $('dsh-import-file').addEventListener('change', async () => {
 });
 $('apply-dsh-import').addEventListener('click', previewImport);
 $('copy-memory-commands').addEventListener('click', () => copyCodeBlock('dsh-memory-commands', '已复制选中的记忆命令'));
+$('save-memory-import').addEventListener('click', saveImportedMemory);
 window.addEventListener('hashchange', navigate);
 $('admin-refresh').addEventListener('click', loadAdmin);
 $('admin-feedback-prev').addEventListener('click', () => void loadAdminFeedback(Math.max(0, adminFeedbackPage.offset - adminFeedbackPage.limit)));
@@ -1183,7 +1345,7 @@ $('confirm-disable-member').addEventListener('click', () => {
 });
 $('disable-member-dialog').addEventListener('close', () => { userToDisable = undefined; });
 $('member-feedback-form').addEventListener('submit', submitMemberFeedback);
-$('usage-refresh').addEventListener('click', loadUsage);
+$('usage-refresh').addEventListener('click', () => loadUsage(true));
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !accountUsername()) return;
   const route = activeRoute();

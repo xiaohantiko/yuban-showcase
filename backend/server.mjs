@@ -23,6 +23,8 @@ import { createMultiConsoleAuth } from './multi-console-auth.mjs';
 import { createFeedbackStore } from './feedback-local.mjs';
 import { createUsageTracker, usageProvider } from './usage.mjs';
 import { usageFile } from './usage-local.mjs';
+import { createBalanceMonitor } from './balance-monitor.mjs';
+import { allowsChainChat, importPluginMemory, pluginCapabilities } from './plugin-capabilities.mjs';
 
 const webRoot = new URL('../web/', import.meta.url);
 const defaultStateFile = fileURLToPath(new URL('../.data/state.json', import.meta.url));
@@ -44,6 +46,7 @@ const TYPES = new Map([
   ['/login.css', ['login.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/model-catalog.js', ['model-catalog.js', 'text/javascript; charset=utf-8']],
+  ['/dsh-catalog.js', ['dsh-catalog.js', 'text/javascript; charset=utf-8']],
   ['/dsh-portable.js', ['dsh-portable.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/assets/altcha.js', ['../node_modules/altcha/dist/external/altcha.min.js', 'text/javascript; charset=utf-8']],
@@ -165,6 +168,22 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     load: settingsStore.load,
     save(kind, value) { requireActive(); return settingsStore.save(kind, value); },
   }, { fetchImpl, clock, onUsage });
+  const balanceMonitor = createBalanceMonitor({
+    getEnv: async () => (await setup.runtime()).env, fetchImpl, clock, signal: lifetime.signal,
+    store: {
+      async read() {
+        return settingsStore.load().balance ?? { revision: 0, value: {} };
+      },
+      async compareAndSet(previous, value) {
+        requireActive();
+        const current = settingsStore.load().balance;
+        if ((current?.revision ?? 0) !== previous.revision) return false;
+        settingsStore.save('balance', { revision: previous.revision + 1, value });
+        return true;
+      },
+    },
+  });
+  let nextBalancePollAt = settingsStore.load().balance?.value?.nextCheckAt ?? 0;
   const accountFile = env.YUBAN_CONSOLE_ACCOUNTS === '1' ? setupFile(`${file}.account.json`) : null;
   // The Node console and its existing state file run in one process. The comparison
   // and write both finish before another request can change the current revision.
@@ -250,7 +269,9 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         modelId: providers.modelId ?? null,
         aiApi: Boolean(aiToken),
         gptAction: Boolean(gptSchema),
-        dsh: { configured: dshRelay.configured, tools: dshRelay.tools },
+        dsh: { configured: dshRelay.configured, tools: dshRelay.tools,
+          plugins: pluginCapabilities(state.settings, { dsh: dshRelay,
+            memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }) },
         search: providers.searchProvider ?? (providers.searchConfigured ? 'configured' : 'none'),
         voice: providers.voiceProvider ?? (providers.voiceConfigured ? 'remote' : 'browser'),
         qq: statusOf('qq'), onebot: statusOf('onebot'),
@@ -259,15 +280,69 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     };
   }
   function markActivity(thread) { thread.lastUserAt = Math.max(clock(), (thread.lastUserAt ?? 0) + 1); }
-  async function push(runtime, transport, target, message, { proactive = false, owner } = {}) {
+  async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false } = {}) {
     if (stopped || (owner && !sameBinding(owner))) return false;
     let audio;
     if (message.voice && !proactive) {
       try { audio = await runtime.providers.audio(message.text); } catch { /* Reply in text if voice generation fails. */ }
     }
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
-    await runtime.transports[transport].send(target, { text: renderForTransport(message), audio, proactive });
+    let ticket;
+    if (balanceNotice && transport === 'qq' && owner && !proactive) {
+      try { ticket = await balanceMonitor.pending(channelKey(owner), state.settings); } catch { /* Keep ordinary chat available. */ }
+    }
+    if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
+    if (ticket && !await balanceMonitor.isCurrent(ticket)) ticket = null;
+    if (owner && !sameBinding(owner)) return false;
+    const text = [renderForTransport(message), ...(ticket ? [ticket.text] : [])].join('\n\n');
+    const delivery = await runtime.transports[transport].send(target, { text, audio, proactive });
+    if (ticket) {
+      try {
+        // QQ media replies carry only audio. Keep that reply and use the next
+        // sequence of this same inbound message for the account notification.
+        if (audio && delivery?.voice !== false) {
+          if (!await transportCurrent(runtime, transport) || !await balanceMonitor.isCurrent(ticket) || !sameBinding(owner)) return true;
+          await runtime.transports[transport].send(target, { text: ticket.text, sequence: 2 });
+        }
+        await balanceMonitor.confirm(ticket);
+      } catch { log('qq', 'balance', 'error', '余额提醒等待下次私聊重试'); }
+    }
     return true;
+  }
+  async function sendBalanceNotice() {
+    if (stopped || isQuiet(clock(), state.settings)) return;
+    const runtime = await services();
+    const owner = currentOwner(runtime);
+    if (owner?.transport !== 'qq' || !runtime.transports.qq.capabilities?.proactive) return;
+    const key = channelKey(owner);
+    const thread = state.channels[key];
+    const target = { type: 'c2c', id: owner.id };
+    const lock = lockKey('qq', owner.scope, target);
+    if (!thread?.lastUserAt || clock() - thread.lastUserAt >= 30 * DAY || locks.has(lock)) return;
+    await withThread(lock, async () => {
+      if (!sameBinding(owner) || !await transportCurrent(runtime, 'qq') || isQuiet(clock(), state.settings)) return;
+      const ticket = await balanceMonitor.pending(key, { proactive: true, ...state.settings });
+      if (!ticket || !await transportCurrent(runtime, 'qq') || !await balanceMonitor.isCurrent(ticket) || !sameBinding(owner)) return;
+      try {
+        await runtime.transports.qq.send(target, { text: ticket.text, proactive: true });
+        await balanceMonitor.confirm(ticket);
+        log('qq', 'balance', 'ok', '已发送低余额提醒');
+      } catch { log('qq', 'balance', 'error', '主动余额提醒等待下次私聊重试'); }
+    });
+  }
+  async function pollBalance({ force = false } = {}) {
+    if (stopped) return;
+    if (!force && (clock() < nextBalancePollAt || state.owner?.transport !== 'qq'
+      || (!env.AI_API_KEY?.trim() && !settingsStore.load().model))) return;
+    nextBalancePollAt = clock() + 60_000;
+    try {
+      const runtime = await services();
+      const owner = currentOwner(runtime);
+      if (!force && owner?.transport !== 'qq') return;
+      await balanceMonitor.refresh(owner?.transport === 'qq' ? channelKey(owner) : null, { force });
+      nextBalancePollAt = settingsStore.load().balance?.value?.nextCheckAt ?? clock() + 15 * 60_000;
+      await sendBalanceNotice();
+    } catch { /* A balance check must never stop chat or the scheduler. */ }
   }
   function commitEvent(seenKey, { key, thread, owner = state.owner, ownerClaim = state.ownerClaim } = {}) {
     const previousOwner = state.owner;
@@ -390,10 +465,12 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         const kind = pluginCommand ? 'plugin' : 'reply';
         try {
           if (pluginCommand) {
-            const result = await dshRelay.handle({ transport, target: parsed.target, text: parsed.text });
-            message = newMessage('assistant', result?.text || '未能处理插件命令。');
+            const removed = 'dsh-chain 已从正在使用中移除。重新添加后，可以继续查询。';
+            const result = allowsChainChat(state.settings, parsed.text)
+              ? await dshRelay.handle({ transport, target: parsed.target, text: parsed.text }) : { text: removed };
+            message = newMessage('assistant', allowsChainChat(state.settings, parsed.text) ? result?.text || '未能处理插件命令。' : removed);
           }
-          if (!await push(runtime, transport, parsed.target, message, { owner })) return;
+          if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true })) return;
           log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : '已发送对话回复');
         } catch (err) { log(transport, kind, 'error', transportError(err)); }
         return completion ? { completion, owner, key, thread } : null;
@@ -413,7 +490,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       if (!committed) seen.delete(seenKey);
     }
   }
-  async function tick() {
+  async function tickGreetings() {
     const now = clock();
     const settings = state.settings;
     if (stopped || !settings.enabled || isQuiet(now, settings)) return;
@@ -461,6 +538,9 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         }
       });
     } finally { greetingInFlight.delete(key); }
+  }
+  async function tick() {
+    await Promise.all([tickGreetings(), pollBalance()]);
   }
   const authToken = env.YUBAN_ADMIN_TOKEN;
   async function handle(req, res, { path: routedPath, account = null, endpoints } = {}) {
@@ -596,7 +676,14 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
         const { data } = await readJSON(req);
         requireActive();
-        try { return send(res, 200, await setup.save(path === setupModelRoute ? 'model' : 'qq', data)); }
+        try {
+          const result = await setup.save(path === setupModelRoute ? 'model' : 'qq', data);
+          if (path === setupModelRoute) {
+            nextBalancePollAt = 0;
+            void pollBalance({ force: true });
+          }
+          return send(res, 200, result);
+        }
         catch (err) {
           if ([400, 403, 502, 503].includes(err?.status)) fail(err.status, err.message);
           throw err;
@@ -604,6 +691,46 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       }
       if (method === 'GET' && TYPES.has(path) && !path.startsWith('/login')) return await serveAsset(res, path);
       if (method === 'GET' && path === '/api/state') return send(res, 200, await snapshot(username, endpoints, account));
+      if (path === '/api/plugins/memory/import') {
+        if (method !== 'POST') return send(res, 405, { error: '请使用 POST 请求。' }, { Allow: 'POST' });
+        if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+        const { data } = await readJSON(req);
+        if (Object.keys(data).some(key => !['plugin', 'notes'].includes(key))) fail(400, '只接受已选插件和确认后的记忆。');
+        const runtime = await services();
+        requireActive();
+        const owner = currentOwner(runtime);
+        if (owner?.transport !== 'qq') fail(409, '请先绑定本账号的 QQ，再导入记忆。');
+        const target = { type: 'c2c', id: owner.id };
+        const result = await withThread(lockKey('qq', owner.scope, target), async () => {
+          if (!await transportCurrent(runtime, 'qq') || !sameBinding(owner)) fail(409, 'QQ 绑定刚刚发生变化，请重新确认。');
+          requireActive();
+          const key = channelKey(owner);
+          const previous = state.channels[key];
+          let imported;
+          try { imported = importPluginMemory(previous?.memory, { settings: state.settings, ...data }); }
+          catch (error) { if ([400, 409].includes(error.status)) fail(error.status, error.message); throw error; }
+          const thread = { ...previous, messages: [...(previous?.messages ?? [])], memory: imported.memory };
+          state.channels[key] = thread;
+          try { save(); } catch (error) { state.channels[key] = previous; throw error; }
+          return { ok: true, added: imported.added, duplicates: imported.duplicates };
+        });
+        return send(res, 200, result);
+      }
+      if (path === '/api/balance' || path === '/api/balance/refresh') {
+        const expected = path === '/api/balance' ? 'GET' : 'POST';
+        if (method !== expected) return send(res, 405, { error: `请使用 ${expected} 请求` }, { Allow: expected });
+        if (method === 'POST') {
+          if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+          const { data } = await readJSON(req);
+          if (Object.keys(data).length) fail(400, '余额刷新不接受额外参数');
+          void pollBalance({ force: true });
+        }
+        const runtime = await services();
+        requireActive();
+        const owner = currentOwner(runtime);
+        return send(res, method === 'POST' ? 202 : 200,
+          await balanceMonitor.snapshot(owner?.transport === 'qq' ? channelKey(owner) : null));
+      }
       if (method === 'GET' && path === '/api/usage') {
         const runtime = await setup.runtime();
         const { model, hasApiKey, configured } = runtime.status.model;

@@ -2,6 +2,7 @@ const MODEL_CATALOG = Object.freeze([
   {
     id: 'deepseek',
     name: 'DeepSeek',
+    portal: 'https://platform.deepseek.com/api_keys',
     base: 'https://api.deepseek.com',
     docs: 'https://api-docs.deepseek.com/zh-cn/',
     voiceNote: 'DeepSeek 已提供海星、暗潮音色。部署者配置独立的 DeepSeek 语音密钥后，可接入 QQ 语音回复。发送能力取决于机器人权限和平台支持。',
@@ -14,6 +15,7 @@ const MODEL_CATALOG = Object.freeze([
   {
     id: 'qwen',
     name: '千问',
+    portal: 'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key',
     base: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     docs: 'https://help.aliyun.com/zh/model-studio/get-api-key',
     voiceNote: '百炼提供千问语音合成。接入百炼原生语音接口需要专用适配，也可以另接兼容的语音服务。',
@@ -26,6 +28,7 @@ const MODEL_CATALOG = Object.freeze([
   {
     id: 'doubao',
     name: '豆包',
+    portal: 'https://ark.volcengine.com/region:cn-beijing/apikey',
     base: 'https://ark.cn-beijing.volces.com/api/v3',
     docs: 'https://docs.volcengine.com/docs/ark/model-list?lang=zh',
     voiceNote: '豆包提供独立的语音合成接口。接入豆包原生语音需要专用适配，也可以另接兼容的语音服务。',
@@ -35,6 +38,7 @@ const MODEL_CATALOG = Object.freeze([
   {
     id: 'openai',
     name: 'GPT / OpenAI',
+    portal: 'https://platform.openai.com/api-keys',
     base: 'https://api.openai.com/v1',
     docs: 'https://developers.openai.com/api/docs/models/gpt-5.4-mini',
     voiceNote: 'OpenAI 的 gpt-4o-mini-tts 可单独接入语音。官方将于 2027 年 1 月 6 日停用该接口下的语音模型，后继 Realtime 接口需要专用适配。',

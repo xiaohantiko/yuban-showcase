@@ -140,3 +140,16 @@ test('retention is finite, page IDs stay stable, and notes and moments share one
   assert.ok(recalled.reduce((sum, value) => sum + value.length, 0) <= 400);
   assert.ok(context.notes.length && context.moments?.length);
 });
+
+test('explicitly retiring an alias only replaces the matching shared activity', () => {
+  const prior = '以后我们把整理书桌叫折纸船吧';
+  let memory = capture(optedIn(), prior, 1);
+  memory = capture(memory, '以后我们把晚饭散步叫折纸船吧', 2);
+  memory = capture(memory, '之前我说错了，以后我们把整理书桌叫数窗灯，折纸船这个说法作废。', 3);
+  const restart = JSON.parse(JSON.stringify(memory));
+  assert.deepEqual(restart.shared.moments.map(item => item.evidence), [
+    '以后我们把晚饭散步叫折纸船吧', '我们把整理书桌叫数窗灯',
+  ]);
+  const replay = capture(restart, prior, 1);
+  assert.deepEqual(replay.shared.moments, restart.shared.moments);
+});
