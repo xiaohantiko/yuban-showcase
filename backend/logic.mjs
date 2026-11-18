@@ -127,7 +127,7 @@ export async function createReply(providers, settings, messages, text, { mode, v
   let result;
   try {
     result = await providers.reply({
-      messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story }),
+      messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story, at: timeContext ? at : undefined }),
       mode: kind, companionName, companionPersona,
       ...(kind === 'chat' ? { turnContext: companionTurnContext(messages, query) } : {}),
       ...(story && kind === 'chat' ? { story: true } : {}),

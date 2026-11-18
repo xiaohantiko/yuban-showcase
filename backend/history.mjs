@@ -29,9 +29,9 @@ export function boundStoredHistory(messages) {
   }));
 }
 
-export function boundedChatContext(messages, latestText, { story = false } = {}) {
+export function boundedChatContext(messages, latestText, { story = false, at } = {}) {
   const latest = clip(latestText, story ? MAX_CHAT_CHARACTERS : MAX_STORED_TEXT);
-  const recent = [{ role: 'user', text: latest }];
+  const recent = [{ role: 'user', text: latest, ...(Number.isSafeInteger(at) ? { at } : {}) }];
   let remaining = MAX_CHAT_CHARACTERS - latest.length;
   const oldest = Math.max(0, messages.length - (MAX_CHAT_MESSAGES - 1));
   for (let index = messages.length - 1; index >= oldest && remaining > 0; index--) {
@@ -39,7 +39,8 @@ export function boundedChatContext(messages, latestText, { story = false } = {})
     if (!isMessage(message)) continue;
     const text = clip(message.text, Math.min(MAX_STORED_TEXT, remaining));
     if (!text) break;
-    recent.push({ role: message.role, text, ...(message.kind === 'greeting' ? { kind: message.kind } : {}) });
+    recent.push({ role: message.role, text, ...(Number.isSafeInteger(message.at) ? { at: message.at } : {}),
+      ...(message.kind === 'greeting' ? { kind: message.kind } : {}) });
     remaining -= text.length;
   }
   return recent.reverse();

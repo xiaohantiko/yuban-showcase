@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { handleMemoryCommand, memoryContextFor, startMemoryLearning } from './memory.mjs';
+import { handleMemoryCommand, memoryContextFor, readMemory, startMemoryLearning } from './memory.mjs';
 import { extractSharedMemory, validateSharedMemoryDetails } from './shared-memory.mjs';
 
 const allowed = { allowed: true, privateChat: true };
@@ -44,6 +44,54 @@ test('quoted, hypothetical, private, and do-not-store sources cannot authorize a
   assert.deepEqual(validateSharedMemoryDetails([candidate], [{ role: 'user', text: '今天聊聊钢琴' }]), []);
   assert.deepEqual(validateSharedMemoryDetails([candidate], [{ role: 'user', text: evidence }]), [candidate]);
   assert.deepEqual(extractSharedMemory(`别忘记${evidence}。`), [{ kind: 'ritual', evidence: `别忘记${evidence}` }]);
+});
+
+test('only the speaker’s own affirmative statement can establish a personal fact', () => {
+  const preference = { kind: 'preference', evidence: '我最喜欢青柠酸奶' };
+  for (const text of [
+    '小李说「我最喜欢青柠酸奶」', '阿青写道：“第一天。我最喜欢青柠酸奶。”',
+    '你刚才说过我最喜欢青柠酸奶', '我不是说我最喜欢青柠酸奶',
+    '谁说我最喜欢青柠酸奶', '你猜我最喜欢青柠酸奶', '你说过我最喜欢青柠酸奶吗？',
+    '故事里的我最喜欢青柠酸奶', '我闺蜜的口头禅是“我最喜欢青柠酸奶”。', '随口编的：“我最喜欢青柠酸奶”。',
+  ]) {
+    assert.deepEqual(extractSharedMemory(text), [], text);
+    assert.deepEqual(validateSharedMemoryDetails([preference], [{ role: 'user', text }]), [], text);
+  }
+  for (const text of ['我的朋友终于毕业了', '我同学最喜欢青柠酸奶']) {
+    assert.deepEqual(extractSharedMemory(text), [], text);
+    assert.deepEqual(validateSharedMemoryDetails([{ kind: 'milestone', evidence: text }], [{ role: 'user', text }]), [], text);
+  }
+  for (const text of ['我最喜欢青柠酸奶', '我之前跟你说过我最喜欢青柠酸奶', '我最喜欢「青柠」味酸奶']) {
+    assert.deepEqual(extractSharedMemory(text), [{ kind: 'preference', evidence: text }], text);
+  }
+  const correction = '我不是说我最喜欢草莓，但是我最喜欢青柠酸奶。';
+  assert.deepEqual(extractSharedMemory(correction), [{ kind: 'preference', evidence: '但是我最喜欢青柠酸奶' }]);
+  assert.deepEqual(validateSharedMemoryDetails([preference], [{ role: 'user', text: correction }]), [preference]);
+  const bothSpeakers = '朋友说：“我最喜欢草莓。”我自己最喜欢青柠酸奶。';
+  const own = { kind: 'preference', evidence: '我自己最喜欢青柠酸奶' };
+  assert.deepEqual(extractSharedMemory(bothSpeakers), [own]);
+  assert.deepEqual(validateSharedMemoryDetails([own, { kind: 'preference', evidence: '我最喜欢草莓' }], [{ role: 'user', text: bothSpeakers }]), [own]);
+  for (const suffix of ['，这一段不用保存。', '，我的密码是示例。']) {
+    assert.deepEqual(extractSharedMemory(bothSpeakers + suffix), []);
+    assert.deepEqual(validateSharedMemoryDetails([own], [{ role: 'user', text: bothSpeakers + suffix }]), []);
+  }
+  const quotedAlias = '以后我们就把加班叫「打怪」吧';
+  assert.deepEqual(extractSharedMemory(quotedAlias), [{ kind: 'inside-joke', evidence: quotedAlias }]);
+});
+
+test('legacy misattributions stay individually manageable without informing chat recall', () => {
+  const old = { ...optedIn(), shared: { nextId: 8, moments: [
+    { id: 2, kind: 'preference', evidence: '小李说「我最喜欢青柠酸奶」' },
+    { id: 4, kind: 'preference', evidence: '我不是说我最喜欢草莓酸奶' },
+    { id: 7, kind: 'preference', evidence: '我最喜欢芒果酸奶' },
+  ] } };
+  const reloaded = readMemory(JSON.parse(JSON.stringify(old)));
+  assert.deepEqual(reloaded.shared.moments.map(moment => moment.id), [2, 4, 7]);
+  assert.equal(reloaded.shared.nextId, 8);
+  assert.deepEqual(memoryContextFor(reloaded, { ...allowed, query: '想聊聊酸奶' })?.moments,
+    [{ kind: 'preference', evidence: '我最喜欢芒果酸奶' }]);
+  assert.match(handleMemoryCommand(reloaded, '查看相处记忆', allowed).text, /小事2.*小李/u);
+  assert.deepEqual(handleMemoryCommand(reloaded, '忘记 小事2', allowed).memory.shared.moments.map(moment => moment.id), [4, 7]);
 });
 
 test('a named memory topic does not bring in unrelated memories of the same kind', () => {

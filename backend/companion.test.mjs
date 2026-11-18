@@ -392,3 +392,123 @@ test('one conversation sample classifies reply preferences and extracts only bou
   output = { signals: [], details: [ritual], note: '额外字段' };
   assert.equal(await providers.learnConversation({ messages }), null);
 });
+
+test('a bare greeting uses only the new salutation and style, while a substantive greeting keeps the conversation', async () => {
+  const requests = [];
+  const providers = createProviders({ AI_BASE_URL: 'https://example.com/v1', AI_MODEL: 'fixture' }, {
+    fetchImpl: async (_url, { body }) => {
+      requests.push(JSON.parse(body).messages);
+      return Response.json({ choices: [{ message: { content: '嗨。' } }] });
+    },
+  });
+  const settings = { ...defaultSettings, companionName: '南星' };
+  const history = [{ role: 'user', text: '老朋友说她有点低落。' }, { role: 'assistant', text: '是不是昨晚还委屈？' }];
+  const memoryContext = { notes: ['我偏爱青苹果'], traits: ['喜欢简短回应'] };
+  for (const latest of ['中午好呀。', '南星，中午好！', '早上好，南星☀️', '在吗？', '南星～晚上好！']) {
+    await createReply(providers, settings, history, latest, { memoryContext });
+    const [system, style, ...dialogue] = requests.at(-1);
+    assert.match(system.content, /只打了个招呼/u);
+    assert.deepEqual(dialogue, [{ role: 'user', content: latest }]);
+    assert.deepEqual(JSON.parse(style.content).traits, memoryContext.traits);
+    assert.doesNotMatch(JSON.stringify(requests.at(-1)), /老朋友|昨晚还委屈|青苹果/u);
+  }
+  const question = '中午好，你还记得我喜欢哪种苹果吗？';
+  await createReply(providers, settings, history, question, { memoryContext });
+  const [system, memory, ...dialogue] = requests.at(-1);
+  assert.doesNotMatch(system.content, /只打了个招呼/u);
+  assert.match(memory.content, /青苹果/u);
+  assert.deepEqual(dialogue.map(message => message.role), ['user', 'assistant', 'user']);
+});
+
+test('chat dates index only actual user turns, distinguish unknown dates and never promote guesses into evidence', async () => {
+  const calls = [];
+  const providers = createProviders({ AI_BASE_URL: 'https://example.com/v1', AI_MODEL: 'fixture' }, {
+    fetchImpl: async (_url, { body }) => {
+      calls.push(JSON.parse(body).messages);
+      return Response.json({ choices: [{ message: { content: '你提到的是青柠。' } }] });
+    },
+  });
+  const history = [
+    ...Array.from({ length: 18 }, (_, n) => ({ role: 'assistant', text: `早期 ${n}` })),
+    { role: 'user', text: '这是没有日期的旧话。' },
+    { role: 'assistant', text: '我猜错的心情。', at: Date.parse('2026-11-13T08:02:00Z') },
+    { role: 'user', text: '今天吃了青柠片。', at: Date.parse('2026-11-15T17:00:00Z') },
+    { role: 'assistant', text: '朋友也喜欢这个味道？' },
+  ];
+  const question = '我吃过哪种水果？那会儿我心情怎样？';
+  await createReply(providers, defaultSettings, history, question, {
+    at: Date.parse('2026-11-18T04:05:00Z'),
+    timeContext: { timeZone: 'Asia/Shanghai', localDate: '2026-11-18', localTime: '12:05', daypart: 'afternoon' },
+    memoryContext: { notes: ['我家果盘是圆的'] },
+  });
+  const [system, memory, ...dialogue] = calls.at(-1);
+  assert.match(system.content, /\[null,"2026-11-16 01:00","2026-11-18 12:05"\]/u);
+  assert.match(system.content, /助手之前的猜测、对方的提问、否认、假设和转述/u);
+  assert.match(system.content, /有依据就自然说出具体细节/u);
+  assert.doesNotMatch(system.content, /11-13|青柠片|我猜错的心情|果盘/u);
+  assert.match(memory.content, /果盘/u);
+  assert.deepEqual(dialogue.slice(-5).map(({ role, content }) => [role, content]), [
+    ['user', history.at(-4).text], ['assistant', history.at(-3).text], ['user', history.at(-2).text],
+    ['assistant', history.at(-1).text], ['user', question],
+  ]);
+  assert.doesNotMatch(JSON.stringify(dialogue), /早期 0"|11-16/u);
+});
+
+test('proactive tone never treats a mention, denial or question about sadness as the owner reporting it', async () => {
+  const requests = [];
+  const providers = createProviders({ AI_BASE_URL: 'https://example.com/v1', AI_MODEL: 'fixture' }, {
+    fetchImpl: async (_url, { body }) => {
+      requests.push(JSON.parse(body).messages);
+      return Response.json({ choices: [{ message: { content: '在忙啥呀' } }] });
+    },
+  });
+  const at = Date.parse('2026-11-18T04:05:00Z');
+  for (const text of ['朋友昨晚很难过。', '我昨晚难过吗？', '我昨晚其实没有难过。']) {
+    const messages = [{ role: 'user', text, at: at - 3_600_000 }];
+    await createGreeting(providers, defaultSettings, messages, { at });
+    const [system, owner] = requests.at(-1);
+    assert.deepEqual(owner, { role: 'user', content: text });
+    assert.match(system.content, /\["2026-11-18 11:05"\]/u);
+    assert.doesNotMatch(system.content, /上次对方有些难受|替对方断定情绪/u);
+    assert.doesNotMatch(companionGreeting({ messages }), /难过|难受|好点|安慰/u);
+  }
+});
+
+test('an unsolicited comparison in the model output is never delivered for a plain greeting', async () => {
+  let answer = '中午好呀。感觉你比昨晚轻松点了。';
+  let calls = 0;
+  const providers = createProviders({ AI_BASE_URL: 'https://example.com/v1', AI_MODEL: 'fixture' }, {
+    fetchImpl: async () => {
+      calls++;
+      return Response.json({ choices: [{ message: { content: answer } }] });
+    },
+  });
+  const messages = [{ role: 'user', text: '中午好呀' }];
+  const first = await providers.reply({ messages });
+  assert.doesNotMatch(first.text, /昨晚|轻松|演示/u);
+  assert.match(first.text, /嗨/u);
+  answer = '中午好呀，来啦。';
+  assert.equal((await providers.reply({ messages })).text, answer);
+  assert.equal(calls, 2);
+});
+
+test('a late salutation fallback respects night cues and offline recall questions never infer a mood', async () => {
+  const history = [{ role: 'assistant', text: '你昨晚很开心吧？' }];
+  const guessed = createProviders({ AI_BASE_URL: 'https://example.com/v1', AI_MODEL: 'fixture' }, {
+    fetchImpl: async () => Response.json({ choices: [{ message: { content: '比昨晚轻松了吧。' } }] }),
+  });
+  for (const [nightCue, remindersSuppressed, expected, disallowed] of [
+    ['first', false, /挺晚/u, /昨晚/u], ['none', false, /嗨/u, /昨晚|晚啦|累了/u],
+    ['reminder', false, /歇会儿/u, /昨晚/u], ['first', true, /嗨/u, /昨晚|晚啦|累了/u],
+  ]) {
+    const at = Date.parse('2026-11-18T17:01:00Z');
+    const timeContext = { timeZone: 'Asia/Shanghai', localDate: '2026-11-19', localTime: '01:01', daypart: 'late-night', nightCue, remindersSuppressed };
+    const result = await createReply(guessed, { ...defaultSettings, companionName: '南星' }, history, '南星～晚上好', { at, timeContext });
+    assert.match(result.text, expected);
+    assert.doesNotMatch(result.text, disallowed);
+  }
+  const offline = createProviders({});
+  const answer = await createReply(offline, defaultSettings, history, '我昨晚很开心吗？');
+  assert.match(answer.text, /不确定/u);
+  assert.doesNotMatch(answer.text, /替你高兴|昨晚很开心/u);
+});

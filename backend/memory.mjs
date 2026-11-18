@@ -1,6 +1,6 @@
 import { isPersonalityCue, personalityContext, personalityLabel, personalityTraits, reciprocalPersonalityCue, validatePersonalityObservation } from './personality.mjs';
 import {
-  extractSharedMemory, forgetSharedMemory, readSharedMemory, rememberSharedMemory, sharedMemoryLabels,
+  extractSharedMemory, forgetSharedMemory, isOwnerMemoryStatement, readSharedMemory, rememberSharedMemory, sharedMemoryLabels,
   sharedMemorySource, validateSharedMemoryDetails,
 } from './shared-memory.mjs';
 
@@ -312,7 +312,8 @@ function recallDetails(notes, moments, terms, kindHint) {
   if (terms === undefined) {
     ranked = notes.slice(-CONTEXT_NOTE_LIMIT).reverse().map(evidence => ({ evidence }));
   } else {
-    const rows = [...notes.map((evidence, index) => ({ evidence, index })), ...moments.map(moment => ({ ...moment, index: moment.id }))];
+    const ownerMoments = moments.filter(({ evidence }) => isOwnerMemoryStatement(evidence));
+    const rows = [...notes.map((evidence, index) => ({ evidence, index })), ...ownerMoments.map(moment => ({ ...moment, index: moment.id }))];
     const candidates = rows.flatMap(row => {
       let score = 0;
       for (const term of memoryTerms(row.evidence)) if (terms.has(term)) score++;

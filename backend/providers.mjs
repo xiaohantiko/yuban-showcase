@@ -1,4 +1,5 @@
-import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, validGreeting } from './companion.mjs';
+import { groundedReply } from './grounded-reply.mjs';
+import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, isBareGreeting, validGreeting } from './companion.mjs';
 import { chatCompletionBody } from './model-request.mjs';
 import { personalityTraits, validatePersonalityObservation } from './personality.mjs';
 import { sharedMemoryKinds, validateSharedMemoryDetails } from './shared-memory.mjs';
@@ -6,6 +7,9 @@ import { meterModelRequest } from './usage.mjs';
 
 const directLookup = /^(?:查(?:一下|一查|查|资料)|搜(?:一下|一搜|搜|索)|检索|找(?:点|一下)?资料)(?:资料)?|^(?:查|搜)(?=[：:\s，,]|$)|^(?:look up|search for)(?=\s|$)/iu;
 const requestedLookup = /^(?:(?:请|可以|能不能|麻烦你)?(?:帮我|给我|替我)|我想|请)(?:查|搜(?:索)?)(?:一下|一查|一搜|查|搜)?(?:资料)?/u;
+// A bare salutation has no factual history attached. Do not deliver a model's
+// unsolicited comparison with an earlier mood even if it ignored that boundary.
+const greetingAssumesPast = /昨晚|昨夜|昨天|前晚|上次|上回|比(?:之前|以前|刚才)|(?:心情|情绪).{0,5}(?:好些|好[多点]|好多|变好|平复)|(?:又|还是|还在)(?:难过|低落|焦虑|不开心)|(?:last night|yesterday|better than before|still upset)/iu;
 const audioFormats = {
   'audio/mpeg': ['audio/mpeg', 'mp3'],
   'audio/mp3': ['audio/mpeg', 'mp3'],
@@ -98,11 +102,14 @@ export function lookupText(input) {
   return command ? input.slice(command[0].length).replace(/^(?:[：:\s，,]+|关于)*/u, '') : null;
 }
 
-function chatHistory(messages, limit, maxLength, omitGreetings = false, latestLength = maxLength) {
-  const selected = messages
+function selectChatHistory(messages, limit, omitGreetings = false) {
+  return messages
     .filter(({ role, text, kind }) => ['user', 'assistant'].includes(role) && typeof text === 'string' && text.trim()
       && (!omitGreetings || kind !== 'greeting'))
     .slice(-limit);
+}
+
+function chatHistory(selected, maxLength, latestLength = maxLength) {
   return selected.map(({ role, text }, index) => ({ role,
     content: text.slice(0, role === 'user' && index === selected.length - 1 ? latestLength : maxLength) }));
 }
@@ -161,7 +168,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
 
   async function observe(prompt, messages) {
     if (!modelConfigured) return null;
-    const history = chatHistory(messages, 10, 400, true);
+    const history = chatHistory(selectChatHistory(messages, 10, true), 400);
     if (!history.some(({ role }) => role === 'user') || !history.some(({ role }) => role === 'assistant')) return null;
     try {
       const response = await complete(prompt, [{ role: 'user', content: JSON.stringify({ dialogue: history }) }], 5_000);
@@ -278,13 +285,21 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
         const hasEarlierReply = messages.some(({ role, kind }) => role === 'assistant' && kind !== 'greeting');
         return { text: hasEarlierReply ? reply : `（演示模式）${reply}` };
       }
-      const history = chatHistory(messages, strict ? 17 : 16, 2400, false, story && !strict ? 6000 : 2400);
-      const observations = strict ? null : companionMemoryMessage(memoryContext);
+      const greetingOnly = !strict && isBareGreeting(input, displayName);
+      const selected = selectChatHistory(messages, greetingOnly ? 1 : strict ? 17 : 16);
+      const history = chatHistory(selected, 2400, story && !strict ? 6000 : 2400);
+      const applicableMemory = greetingOnly ? { traits: memoryContext?.traits, personality: memoryContext?.personality } : memoryContext;
+      const observations = strict ? null : companionMemoryMessage(applicableMemory);
       if (observations) history.unshift(observations);
       try {
         const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
-          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext });
-        return { text: await complete(system, history) };
+          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, sourceMessages: selected, greetingOnly });
+        const text = await complete(system, history);
+        if (greetingOnly && greetingAssumesPast.test(text)) {
+          return { text: demoCompanionReply(messages, displayName, ownerName, timeContext) };
+        }
+        return { text: strict ? text : groundedReply(text, selected, { memoryContext: applicableMemory, timeContext,
+          ...(greetingOnly ? { fallback: () => demoCompanionReply(messages, displayName, ownerName, timeContext) } : {}) }) };
       } catch (error) {
         if (strict) throw error;
         return { text: `模型暂时连不上，先用本地模式陪你聊。\n\n${demoCompanionReply(messages, displayName, ownerName, timeContext)}` };
@@ -340,15 +355,15 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext };
       if (modelConfigured) {
         const observations = companionMemoryMessage({ traits: memoryContext?.traits, personality: memoryContext?.personality });
-        const history = chatHistory(messages, 6, 360, true);
+        const selected = selectChatHistory(messages, 6, true);
         try {
           const text = await complete(companionGreetingPrompt({
-            name: companionName || name, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
+            name: companionName || name, persona: companionPersona, hasMemory: Boolean(observations), ownerName, sourceMessages: selected,
           }, context), [
-            ...(observations ? [observations] : []), ...history,
+            ...(observations ? [observations] : []), ...chatHistory(selected, 360),
             { role: 'user', content: '请按系统说明，生成这一次的主动问候。' },
           ], 5_000);
-          const greeting = validGreeting(text, context);
+          const greeting = validGreeting(groundedReply(text, selected, { timeContext, proactive: true, fallback: () => companionGreeting(context) }), context);
           if (greeting) return { text: greeting };
         } catch { /* Use a short local greeting if the model is unavailable. */ }
       }
