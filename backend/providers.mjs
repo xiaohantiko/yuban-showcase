@@ -1,4 +1,4 @@
-import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, demoCompanionReply, validGreeting } from './companion.mjs';
+import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, validGreeting } from './companion.mjs';
 import { chatCompletionBody } from './model-request.mjs';
 import { personalityTraits, validatePersonalityObservation } from './personality.mjs';
 import { sharedMemoryKinds, validateSharedMemoryDetails } from './shared-memory.mjs';
@@ -98,12 +98,13 @@ export function lookupText(input) {
   return command ? input.slice(command[0].length).replace(/^(?:[：:\s，,]+|关于)*/u, '') : null;
 }
 
-function chatHistory(messages, limit, maxLength, omitGreetings = false) {
-  return messages
+function chatHistory(messages, limit, maxLength, omitGreetings = false, latestLength = maxLength) {
+  const selected = messages
     .filter(({ role, text, kind }) => ['user', 'assistant'].includes(role) && typeof text === 'string' && text.trim()
       && (!omitGreetings || kind !== 'greeting'))
-    .slice(-limit)
-    .map(({ role, text }) => ({ role, content: text.slice(0, maxLength) }));
+    .slice(-limit);
+  return selected.map(({ role, text }, index) => ({ role,
+    content: text.slice(0, role === 'user' && index === selected.length - 1 ? latestLength : maxLength) }));
 }
 
 const observeGuidance = [
@@ -266,7 +267,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
     voiceAvailable: voiceConfigured || Boolean(localAudio),
     voiceProvider: voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
 
-    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, strict = false }) {
+    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, story = false, strict = false }) {
       const input = messages.findLast((message) => message.role === 'user')?.text?.trim() ?? '';
       const lookup = lookupText(input);
       if (mode === 'search' || (!strict && lookup !== null)) return research(lookup ?? input, strict);
@@ -277,11 +278,12 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
         const hasEarlierReply = messages.some(({ role, kind }) => role === 'assistant' && kind !== 'greeting');
         return { text: hasEarlierReply ? reply : `（演示模式）${reply}` };
       }
-      const history = chatHistory(messages, strict ? 17 : 16, 2400);
+      const history = chatHistory(messages, strict ? 17 : 16, 2400, false, story && !strict ? 6000 : 2400);
       const observations = strict ? null : companionMemoryMessage(memoryContext);
       if (observations) history.unshift(observations);
       try {
-        const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName });
+        const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
+          turnContext: turnContext ?? companionTurnContext(messages, input) });
         return { text: await complete(system, history) };
       } catch (error) {
         if (strict) throw error;

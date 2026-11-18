@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { companionGreeting, validGreeting } from './companion.mjs';
+import { companionGreeting, companionTurnContext, validGreeting } from './companion.mjs';
 import { boundedChatContext, MAX_STORED_MESSAGES } from './history.mjs';
 import { dshPluginIDs, selectedPlugins } from './plugin-capabilities.mjs';
 
@@ -113,6 +113,8 @@ export async function createReply(providers, settings, messages, text, { mode, v
     result = await providers.reply({
       messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story }),
       mode: kind, companionName, companionPersona,
+      ...(kind === 'chat' ? { turnContext: companionTurnContext(messages, query) } : {}),
+      ...(story && kind === 'chat' ? { story: true } : {}),
       ...(typeof ownerName === 'string' ? { ownerName } : {}),
       memoryContext: memoryEnabled ? memoryContext : undefined,
     });

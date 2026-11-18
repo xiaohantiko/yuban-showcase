@@ -61,3 +61,61 @@ test('ordinary events need no opening phrase, closing phrase, or command', () =>
   assert.equal(observeStory(null,'今天心烦。').action,'reply');
   assert.equal(observeStory(null,'你能陪我聊会儿吗？').action,'reply');
 });
+
+test('short neutral observations get a brief pause while contact, feelings and direct requests stay immediate', () => {
+  for (const text of ['窗台上有只鸟', '翅膀还挂着雨水', '桌上多了一张纸条']) {
+    const first = observeStory(null, text, { now: 100 });
+    assert.equal(first.action, 'buffer', text);
+    assert.equal(first.state.mode, 'narrative');
+    assert.equal(first.state.nextFlushAt, 3100);
+    assert.equal(dueStory(first.state, 3099), null);
+    assert.equal(dueStory(first.state, 3100), text);
+  }
+  const first = observeStory(null, '窗台上有只鸟', { now: 0 });
+  const second = observeStory(first.state, '翅膀还挂着雨水', { now: 2000 });
+  assert.equal(dueStory(second.state, second.state.nextFlushAt), '窗台上有只鸟\n翅膀还挂着雨水');
+  for (const text of ['在吗', '你在不在', '嗨', '我回来了', '晚安', '好累', '有点难过', '有点烦', '抱抱', '我今天很想你',
+    '陪我一会儿', '你能陪我聊会儿吗', '听我说说', '你叫什么', '你是谁', '你今天怎么样', '说说你自己', '这是什么意思', '今天吃什么',
+    '请帮我查预算', '你会帮我查预算吗']) {
+    assert.equal(observeStory(null, text).action, 'reply', text);
+  }
+});
+
+test('casual listening prefaces stay automatic while only explicit strict waits need a handoff', () => {
+  for (const text of ['你听我说，下午我经过花店', '听我讲啊，窗台上有只鸟', '先听我说，店主把猫抱起来了']) {
+    const result = observeStory(null, text, { now: 10 });
+    assert.equal(result.action, 'buffer', text);
+    assert.equal(result.state.mode, 'narrative', text);
+    assert.equal(dueStory(result.state, result.state.nextFlushAt), text);
+  }
+  for (const text of ['先别回复，我慢慢讲', '等我讲完再回', '先听我说完']) {
+    const result = observeStory(null, text, { now: 10 });
+    assert.equal(result.state.mode, 'explicit', text);
+    assert.equal(dueStory(result.state, 1e9), null);
+  }
+});
+
+test('a quoted story question does not release the buffer but a direct handoff does', () => {
+  const first = observeStory(null, '你听我说，下午我经过花店', { now: 10 });
+  const quoted = observeStory(first.state, '她问我，你觉得呢？', { now: 20 });
+  assert.equal(quoted.action, 'buffer');
+  const quotedAgain = observeStory(quoted.state, '店主说：「你怎么看？」', { now: 30 });
+  assert.equal(quotedAgain.action, 'buffer');
+  const handed = observeStory(quotedAgain.state, '你觉得呢？', { now: 40 });
+  assert.equal(handed.action, 'flush');
+  assert.match(handed.text, /她问我，你觉得呢？\n店主说：「你怎么看？」\n你觉得呢？$/u);
+  assert.equal(observeStory(first.state, '你会帮我查预算吗', { now: 30 }).action, 'flush');
+  assert.equal(observeStory(first.state, '我想问，你今天开心吗？', { now: 30 }).action, 'flush');
+});
+
+test('obvious urgent help bypasses buffering and preserves prior text without an automatic interruption', () => {
+  const state = observeStory(null, '窗台上有只鸟', { now: 0 }).state;
+  for (const text of ['快叫救护车', '救命', '着火了', '我这会不安全', '我现在有危险']) {
+    const result = observeStory(state, text, { now: 20 });
+    assert.equal(result.action, 'reply', text);
+    assert.equal(result.text, text);
+    assert.deepEqual(result.state.parts, state.parts);
+    assert.equal(result.state.mode, 'explicit');
+    assert.equal(result.state.nextFlushAt, null);
+  }
+});
