@@ -2,7 +2,7 @@ import { createReply, searchRequest, voiceRequest } from './logic.mjs';
 import { memoryContextFor, observeMemory, startMemoryLearning } from './memory.mjs';
 import { lookupText } from './providers.mjs';
 
-export async function replyToOwner({ providers, settings, messages, text, memory, ownerName, at }) {
+export async function replyToOwner({ providers, settings, messages, text, memory, ownerName, at, story = false }) {
   const input = text.replace(voiceRequest, '').trim();
   const searching = searchRequest.test(input) || lookupText(input) !== null;
   const conversation = Boolean(input) && !searching;
@@ -11,7 +11,7 @@ export async function replyToOwner({ providers, settings, messages, text, memory
   const observed = remember ? observeMemory(memory, input, memoryOptions) : memory;
   const learning = remember ? startMemoryLearning(observed, { ...memoryOptions, text: input, messages, providers, at }) : { memory: observed };
   const reply = createReply(providers, settings, messages, text, {
-    at, ownerName, ...(searching ? { mode: 'search' } : {}),
+    at, ownerName, story, ...(searching ? { mode: 'search' } : {}),
     memoryContext: remember ? memoryContextFor(learning.memory, { ...memoryOptions, query: input }) : undefined,
   });
   // Start the occasional classifier alongside the reply, but delivery never awaits it.

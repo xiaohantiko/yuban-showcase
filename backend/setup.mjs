@@ -175,8 +175,19 @@ export function createSetup(env, store, { fetchImpl = fetch, clock = Date.now, o
 
   async function save(kind, payload) {
     if (!canSave) fail(503, '请先配置至少 32 位随机字符的管理台口令。');
+    let savedModel;
+    if (kind === 'model' && payload.useSavedKey === true && !payload.apiKey) {
+      savedModel = (await store.load()).model;
+      const prior = decrypt('model', savedModel, key);
+      const requestedBase = modelBase(payload.baseUrl);
+      if (!prior || !modelBases.has(requestedBase) || requestedBase !== prior.baseUrl) {
+        fail(400, '沿用密钥需选择已保存的同一个官方接口。');
+      }
+      payload = { ...payload, apiKey: prior.apiKey };
+    }
     const data = credentials(kind, payload, env);
     await verify(kind, data, fetchImpl, onUsage);
+    if (savedModel && savedModel !== (await store.load()).model) fail(409, '模型设置刚刚变更，请刷新后重试。');
     await store.save(kind, encrypt(kind, { ...data, testedAt: clock() }, key));
     return (await runtime()).status;
   }

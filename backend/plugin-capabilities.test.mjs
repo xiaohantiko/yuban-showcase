@@ -120,6 +120,7 @@ test('Node imports only into the authenticated account current opted-in QQ memor
   await start();
   const first = await login(accounts[0].username); const second = await login(accounts[1].username);
   for (const [index, cookie] of [first, second].entries()) {
+    assert.equal((await request('/api/plugins/activation', { action: 'activate', selected: ['remember'], confirmed: true, revision: 0 }, cookie)).status, 200);
     assert.equal((await request('/api/setup/qq', { appId: String(123450 + index), clientSecret: 'test-key' }, cookie)).status, 200);
   }
   const path = '/api/plugins/memory/import'; const payload = { plugin: 'remember', notes: [note] };
@@ -132,7 +133,8 @@ test('Node imports only into the authenticated account current opted-in QQ memor
   assert.equal((await readFile(locations[1], 'utf8')).includes(note), false);
   const snapshot = await (await request('/api/state', undefined, first)).json();
   assert.equal(snapshot.services.dsh.plugins[0].status, 'ready');
-  assert.equal((await request('/api/settings', { dshPlugins: [] }, first, 'PATCH')).status, 200);
+  assert.equal((await request('/api/settings', { dshPlugins: [] }, first, 'PATCH')).status, 409);
+  assert.equal((await request('/api/plugins/activation', { action: 'update', selected: [], confirmed: true, revision: 1 }, first)).status, 200);
   assert.equal((await request(path, payload, first)).status, 409);
   await stop(); await start();
   const restarted = await (await request('/api/state', undefined, first)).json();

@@ -1,3 +1,4 @@
+import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -25,10 +26,14 @@ import { createUsageTracker, usageProvider } from './usage.mjs';
 import { usageFile } from './usage-local.mjs';
 import { createBalanceMonitor } from './balance-monitor.mjs';
 import { allowsChainChat, importPluginMemory, pluginCapabilities } from './plugin-capabilities.mjs';
+import { activationRevision, activationSnapshot, applyPluginActivation, assertBotEnabled, assertPluginEnabled,
+  assertPluginSettingsPatch, botIsEnabled, migratePluginActivation, pluginActivationRoute, PluginActivationError } from './plugin-activation.mjs';
+import { dueStory, observeStory } from './story-turn.mjs';
 
 const webRoot = new URL('../web/', import.meta.url);
 const defaultStateFile = fileURLToPath(new URL('../.data/state.json', import.meta.url));
 const DAY = 86_400_000;
+const STORY_FLUSH = Symbol('story-flush');
 const OWNER_ROUTE = '/api/owner';
 const OWNER_CODE_ROUTE = `${OWNER_ROUTE}/code`;
 const LOGIN_ASSETS = new Set([
@@ -131,7 +136,7 @@ function requireLogin(res, path, method) {
   return send(res, 401, { error: '请先登录宇伴' }, { 'X-Yuban-Login': '1' });
 }
 function consoleError(res, error) {
-  if (error instanceof HttpError) return send(res, error.status, { error: error.message });
+  if (error instanceof HttpError || error instanceof PluginActivationError) return send(res, error.status, { error: error.message });
   if (error.code === 'ENOENT') return send(res, 404, { error: '找不到文件' });
   console.error('宇伴请求失败：', error.name);
   return send(res, 500, { error: '暂时没处理好，请再试一次' });
@@ -213,13 +218,19 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     if (!qqCache || qqCache.appId !== appId || qqCache.clientSecret !== clientSecret) {
       qqCache = { appId, clientSecret, adapter: createQQAdapter({ appId, clientSecret, fetchImpl }) };
     }
-    return {
+    const result = {
       ...runtime,
       providers: injectedProviders ?? createProviders(runtime.env, { fetchImpl, onUsage }),
       transports: { qq: adapters?.qq ?? qqCache.adapter, onebot },
     };
+    const migrated = migratePluginActivation(state.settings, {
+      legacy: result.transports.qq.configured || result.transports.onebot.configured,
+    });
+    if (migrated !== state.settings) { requireActive(); state.settings = migrated; save(); }
+    return result;
   }
   const locks = new Map();
+  const storyTimers = new Map();
   const greetingInFlight = new Set();
   const seen = new Set(state.seen);
   const withThread = (key, job) => {
@@ -241,7 +252,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
   }
   const sameBinding = (owner) => matchesOwner(state.owner, owner) && state.owner.boundAt === owner.boundAt;
   async function transportCurrent(runtime, transport) {
-    if (stopped) return false;
+    if (stopped || !botIsEnabled(state.settings)) return false;
     if (transport !== 'qq') return true;
     const latest = await setup.runtime();
     return !stopped && scopeFor(latest, 'qq') === scopeFor(runtime, 'qq') && latest.qqVerifiedKey === runtime.qqVerifiedKey;
@@ -270,6 +281,8 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         aiApi: Boolean(aiToken),
         gptAction: Boolean(gptSchema),
         dsh: { configured: dshRelay.configured, tools: dshRelay.tools,
+          activation: activationSnapshot(state.settings, { dsh: dshRelay,
+            memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }),
           plugins: pluginCapabilities(state.settings, { dsh: dshRelay,
             memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }) },
         search: providers.searchProvider ?? (providers.searchConfigured ? 'configured' : 'none'),
@@ -281,7 +294,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
   }
   function markActivity(thread) { thread.lastUserAt = Math.max(clock(), (thread.lastUserAt ?? 0) + 1); }
   async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false } = {}) {
-    if (stopped || (owner && !sameBinding(owner))) return false;
+    if (stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
     let audio;
     if (message.voice && !proactive) {
       try { audio = await runtime.providers.audio(message.text); } catch { /* Reply in text if voice generation fails. */ }
@@ -294,8 +307,11 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
     if (ticket && !await balanceMonitor.isCurrent(ticket)) ticket = null;
     if (owner && !sameBinding(owner)) return false;
-    const text = [renderForTransport(message), ...(ticket ? [ticket.text] : [])].join('\n\n');
-    const delivery = await runtime.transports[transport].send(target, { text, audio, proactive });
+    const text = renderForTransport(message);
+    const delivery = transport === 'qq' ? await deliverReply({ adapter: runtime.transports.qq, target, message, text, audio, proactive,
+      notice: ticket?.text, isCurrent: async () => botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
+    }) : await runtime.transports[transport].send(target, { text, audio, proactive });
+    if (delivery === null) return false;
     if (ticket) {
       try {
         // QQ media replies carry only audio. Keep that reply and use the next
@@ -310,7 +326,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     return true;
   }
   async function sendBalanceNotice() {
-    if (stopped || isQuiet(clock(), state.settings)) return;
+    if (stopped || !botIsEnabled(state.settings) || isQuiet(clock(), state.settings)) return;
     const runtime = await services();
     const owner = currentOwner(runtime);
     if (owner?.transport !== 'qq' || !runtime.transports.qq.capabilities?.proactive) return;
@@ -318,9 +334,9 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     const thread = state.channels[key];
     const target = { type: 'c2c', id: owner.id };
     const lock = lockKey('qq', owner.scope, target);
-    if (!thread?.lastUserAt || clock() - thread.lastUserAt >= 30 * DAY || locks.has(lock)) return;
+    if (!thread?.lastUserAt || thread.storyTurn || clock() - thread.lastUserAt >= 30 * DAY || locks.has(lock)) return;
     await withThread(lock, async () => {
-      if (!sameBinding(owner) || !await transportCurrent(runtime, 'qq') || isQuiet(clock(), state.settings)) return;
+      if (!sameBinding(owner) || !await transportCurrent(runtime, 'qq') || state.channels[key]?.storyTurn || isQuiet(clock(), state.settings)) return;
       const ticket = await balanceMonitor.pending(key, { proactive: true, ...state.settings });
       if (!ticket || !await transportCurrent(runtime, 'qq') || !await balanceMonitor.isCurrent(ticket) || !sameBinding(owner)) return;
       try {
@@ -387,7 +403,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     }
     try {
       const learning = await withThread(lockKey(transport, scope, parsed.target), async () => {
-        const text = parsed.text.trim().slice(0, 2000);
+        let text = parsed.text.trim().slice(0, 6000);
         if (!text || !await transportCurrent(runtime, transport)) return;
         const identity = ownerIdentity(transport, parsed.target, scope);
         const ownerCommand = parseOwnerCommand(parsed.text);
@@ -425,21 +441,27 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
 
         const key = channelKey(owner);
         const previous = state.channels[key];
+        if (parsed[STORY_FLUSH] && (previous?.storyTurn !== parsed[STORY_FLUSH]
+          || dueStory(previous.storyTurn, clock()) !== text)) return;
         const thread = { ...(previous ?? newThread()), messages: [...(previous?.messages ?? [])] };
         thread.target = { type: 'c2c', id: identity.id };
         thread.transport = transport;
-        markActivity(thread);
+        if (!parsed[STORY_FLUSH]) markActivity(thread);
 
         const settings = state.settings;
         const memoryOptions = { allowed: settings.memoryEnabled !== false, privateChat: true };
-        const memoryCommand = handleMemoryCommand(thread.memory, text, memoryOptions);
-        const pluginCommand = isDshCommand(parsed.text);
+        const memoryCommand = !parsed[STORY_FLUSH] && handleMemoryCommand(thread.memory, text, memoryOptions);
+        const pluginCommand = !parsed[STORY_FLUSH] && isDshCommand(parsed.text);
         let message;
         let completion;
         if (pluginCommand) {
           // Save the event ID before calling an external plugin, which may have side effects.
         } else if (memoryCommand) {
           thread.memory = memoryCommand.memory;
+          if (memoryCommand.clearHistory || /^(?:\/|#)?\s*关闭记忆\s*$/u.test(text)) {
+            thread.storyTurn = null;
+            thread.storyTarget = null;
+          }
           if (memoryCommand.clearHistory) thread.messages = [];
           message = newMessage('assistant', memoryCommand.text);
         } else if (commandOn.test(text) || commandOff.test(text)) {
@@ -447,8 +469,32 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
           thread.optedIn = Boolean(canGreet && commandOn.test(text));
           message = newMessage('assistant', thread.optedIn ? '好呀，等你一阵子没回时，我会来问候一声。随时发「关闭问候」就能停下。' : commandOff.test(text) ? '问候已关闭。你想聊天的时候，我都在。' : '目前只有支持主动问候的单聊可以开启哦。');
         } else {
+          const story = parsed[STORY_FLUSH] ? { action: 'flush', state: null, text }
+            : observeStory(thread.storyTurn, text, { now: parsed.receivedAt ?? clock() });
+          thread.storyTurn = story.state;
+          thread.storyTarget = story.state ? { ...parsed.target } : null;
+          if (story.action === 'buffer') {
+            commit({ key, thread });
+            clearTimeout(storyTimers.get(key));
+            storyTimers.delete(key);
+            if (Number.isFinite(story.state.nextFlushAt)) {
+              const timer = setTimeout(() => {
+                storyTimers.delete(key);
+                tickStories().catch(() => console.error('分段讲述处理失败'));
+              }, Math.max(0, story.state.nextFlushAt - clock()));
+              timer.unref();
+              storyTimers.set(key, timer);
+            }
+            return;
+          }
+          if (story.action === 'cancel') {
+            commit({ key, thread });
+            return notice('好，那就先不讲了。想聊别的也可以。', 'reply', owner);
+          }
+          text = story.action === 'flush' ? story.text : (story.text ?? text).slice(0, 2000);
           const turn = await replyToOwner({
             providers, settings, messages: thread.messages, text, memory: thread.memory, ownerName: owner.name, at: clock(),
+            story: story.action === 'flush',
           });
           message = turn.reply;
           completion = turn.completion;
@@ -465,9 +511,11 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         const kind = pluginCommand ? 'plugin' : 'reply';
         try {
           if (pluginCommand) {
+            const revision = activationRevision(state.settings);
             const removed = 'dsh-chain 已从正在使用中移除。重新添加后，可以继续查询。';
             const result = allowsChainChat(state.settings, parsed.text)
               ? await dshRelay.handle({ transport, target: parsed.target, text: parsed.text }) : { text: removed };
+            if (revision !== activationRevision(state.settings)) return;
             message = newMessage('assistant', allowsChainChat(state.settings, parsed.text) ? result?.text || '未能处理插件命令。' : removed);
           }
           if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true })) return;
@@ -497,7 +545,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     const candidate = state.owner;
     const key = channelKey(candidate);
     const thread = key ? state.channels[key] : null;
-    if (!thread?.optedIn || now - thread.lastUserAt >= 30 * DAY || nextGreeting(thread, settings, now) !== now) return;
+    if (!thread?.optedIn || thread.storyTurn || now - thread.lastUserAt >= 30 * DAY || nextGreeting(thread, settings, now) !== now) return;
     const target = { type: 'c2c', id: candidate.id };
     const lock = lockKey(candidate.transport, candidate.scope, target);
     if (locks.has(lock) || greetingInFlight.has(key)) return;
@@ -519,7 +567,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       });
       await withThread(lock, async () => {
         if (!await transportCurrent(runtime, owner.transport) || !sameBinding(owner) || state.owner.name !== owner.name
-          || state.channels[key] !== thread || state.settings !== settings || !thread.optedIn) return;
+          || state.channels[key] !== thread || state.settings !== settings || !thread.optedIn || thread.storyTurn) return;
         const after = clock();
         if (after - activity >= 30 * DAY || nextGreeting(thread, settings, after) !== after) return;
         // A timed-out delivery may have succeeded remotely. Do not retry it automatically.
@@ -539,8 +587,22 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       });
     } finally { greetingInFlight.delete(key); }
   }
+  async function tickStories() {
+    if (stopped) return;
+    const candidate = state.owner;
+    const key = channelKey(candidate);
+    const thread = key ? state.channels[key] : null;
+    const text = dueStory(thread?.storyTurn, clock());
+    if (!text || !thread.storyTarget || locks.has(lockKey(candidate.transport, candidate.scope, thread.storyTarget))) return;
+    const runtime = await services();
+    if (!sameBinding(candidate) || state.channels[key] !== thread) return;
+    await handleEvent(runtime, candidate.transport, {
+      id: keyFor('story', key, JSON.stringify(thread.storyTurn)), text,
+      target: thread.storyTarget, [STORY_FLUSH]: thread.storyTurn,
+    });
+  }
   async function tick() {
-    await Promise.all([tickGreetings(), pollBalance()]);
+    await Promise.all([tickStories(), tickGreetings(), pollBalance()]);
   }
   const authToken = env.YUBAN_ADMIN_TOKEN;
   async function handle(req, res, { path: routedPath, account = null, endpoints } = {}) {
@@ -607,7 +669,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         if (transport === 'qq') verifiedQQ = runtime.qqVerifiedKey;
         const parsed = adapter.parseEvent(data);
         send(res, 200, transport === 'qq' ? { op: 12, d: 0 } : {});
-        if (parsed) handleEvent(runtime, transport, parsed).catch(() => console.error('处理平台消息失败'));
+        if (parsed) handleEvent(runtime, transport, { ...parsed, receivedAt: clock() }).catch(() => console.error('处理平台消息失败'));
         return;
       }
       let username = account?.username ?? null;
@@ -673,6 +735,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
           requireActive();
           return send(res, 200, runtime.status);
         }
+        if (path === setupQQRoute) { await services(); requireActive(); assertBotEnabled(state.settings); }
         if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
         const { data } = await readJSON(req);
         requireActive();
@@ -691,6 +754,39 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       }
       if (method === 'GET' && TYPES.has(path) && !path.startsWith('/login')) return await serveAsset(res, path);
       if (method === 'GET' && path === '/api/state') return send(res, 200, await snapshot(username, endpoints, account));
+      if (path === pluginActivationRoute) {
+        if (!['GET', 'POST'].includes(method)) return send(res, 405, { error: '请使用 GET 或 POST 请求。' }, { Allow: 'GET, POST' });
+        const runtime = await services();
+        requireActive();
+        if (method === 'POST') {
+          if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+          const { data } = await readJSON(req);
+          requireActive();
+          const previous = state.settings;
+          state.settings = applyPluginActivation(previous, data, { dsh: dshRelay });
+          try { save(); } catch (error) { state.settings = previous; throw error; }
+        }
+        const owner = currentOwner(runtime);
+        const thread = owner ? state.channels[channelKey(owner)] : null;
+        return send(res, 200, activationSnapshot(state.settings, { dsh: dshRelay,
+          memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }));
+      }
+      if (path === '/api/plugins/persona/import') {
+        if (method !== 'POST') return send(res, 405, { error: '请使用 POST 请求。' }, { Allow: 'POST' });
+        if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+        const { data } = await readJSON(req);
+        await services();
+        requireActive();
+        if (Object.keys(data).some(key => !['plugin', 'persona'].includes(key))) fail(400, '只接受所选插件和确认后的人设。');
+        assertPluginEnabled(state.settings, data.plugin, ['agent-md', 'memory']);
+        if (typeof data.persona !== 'string' || !data.persona.trim()) fail(400, '请先确认要导入的人设文字。');
+        let next;
+        try { next = mergeSettings(state.settings, { companionPersona: data.persona }); } catch (error) { fail(400, error.message); }
+        const previous = state.settings;
+        state.settings = next;
+        try { save(); } catch (error) { state.settings = previous; throw error; }
+        return send(res, 200, await snapshot(username, endpoints, account));
+      }
       if (path === '/api/plugins/memory/import') {
         if (method !== 'POST') return send(res, 405, { error: '请使用 POST 请求。' }, { Allow: 'POST' });
         if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
@@ -704,6 +800,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         const result = await withThread(lockKey('qq', owner.scope, target), async () => {
           if (!await transportCurrent(runtime, 'qq') || !sameBinding(owner)) fail(409, 'QQ 绑定刚刚发生变化，请重新确认。');
           requireActive();
+          assertPluginEnabled(state.settings, data.plugin, ['remember', 'memory']);
           const key = channelKey(owner);
           const previous = state.channels[key];
           let imported;
@@ -742,6 +839,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       if (method === 'PATCH' && path === '/api/settings') {
         const { data } = await readJSON(req);
         requireActive();
+        assertPluginSettingsPatch(state.settings, data);
         try { state.settings = mergeSettings(state.settings, data); } catch (err) { fail(400, err.message); }
         save();
         return send(res, 200, await snapshot(username, endpoints, account));
@@ -761,6 +859,8 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
   function stop() {
     stopped = true;
     clearInterval(scheduler);
+    for (const timer of storyTimers.values()) clearTimeout(timer);
+    storyTimers.clear();
     lifetime.abort();
   }
   return { handle, tick, stop, qqConfigured: async () => (await setup.runtime()).status.qq.configured };

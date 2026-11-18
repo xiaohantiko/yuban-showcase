@@ -22,6 +22,12 @@ let dirty = false;
 let companionDirty = false;
 let companionSaving = false;
 let dshSaving = false;
+let pluginActivation;
+let pluginActivationDraft = [];
+let pluginActivationRequestId = 0;
+let pluginActivationLoading = false;
+let pluginActivationError = '';
+let pendingPluginChange;
 let setupSnapshot;
 let setupWorking = false;
 let setupLoaded = false;
@@ -167,7 +173,133 @@ async function copyCodeBlock(id, message) {
   }
 }
 function selectedDshPlugins() {
+  if (pluginActivation) return pluginActivation.configured ? pluginActivation.selected : [];
   return Array.isArray(state?.settings.dshPlugins) ? state.settings.dshPlugins : [];
+}
+function pluginCatalog() { return typeof DSH_PLUGIN_CATALOG === 'undefined' ? [] : DSH_PLUGIN_CATALOG; }
+function acceptPluginActivation(value) {
+  if (typeof value?.configured !== 'boolean' || typeof value.botEnabled !== 'boolean'
+    || !Array.isArray(value.selected) || !Array.isArray(value.available) || value.revision == null) return false;
+  const initial = !pluginActivation;
+  pluginActivation = value;
+  if (initial || value.configured) pluginActivationDraft = [...value.selected];
+  renderPluginActivation();
+  return true;
+}
+function pluginCapability(id) {
+  return pluginActivation?.capabilities?.find(item => item.id === id)
+    ?? state?.services?.dsh?.plugins?.find(item => item.id === id);
+}
+function pluginReadiness(id) {
+  const item = pluginCapability(id);
+  if (pluginActivation && !pluginActivation.available.includes(id)) {
+    return { label: '此部署未提供', detail: item?.reason || '需要支持原生 DSH 网关的部署，当前无法启用。' };
+  }
+  const labels = { ready: id === 'chain' ? '网关已配置' : '可使用', 'needs-content': '待导入内容',
+    'needs-memory': '待 QQ 开启记忆', 'needs-setup': '待配置网关', paused: '记忆已暂停', unavailable: '此部署未提供' };
+  const details = id === 'chain' ? '需有可用的原生 DSH 网关与工具授权，勾选不会自动接通。'
+    : id === 'agent-md' ? '导入 AGENT.md 并确认保存后，才会用于陪伴聊天。'
+      : id === 'remember' ? '选中摘要后可确认导入；需本人先在绑定的 QQ 开启记忆。'
+        : '可导入 SOUL.md 人设和摘要记忆；记忆仍需本人在 QQ 同意。';
+  return { label: labels[item?.status] || '等待状态确认', detail: item?.reason || details };
+}
+function renderPluginActivation() {
+  if (!$('plugin-activation-options')) return;
+  const configured = pluginActivation?.configured === true;
+  const working = dshSaving || pluginActivationLoading || Boolean(pendingPluginChange);
+  $('plugin-activation-fields').disabled = !pluginActivation || desktopPreview || working;
+  badge('plugin-activation-status', !pluginActivation ? pluginActivationError ? '暂不可用' : '正在读取…' : configured
+    ? pluginActivation.botEnabled ? '机器人能力已确认' : '机器人尚未启用' : '首次确认', configured && pluginActivation.botEnabled ? 'success' : 'neutral');
+  $('plugin-activation-note').textContent = configured
+    ? '保留当前账号已确认的选择。关闭前会再次确认；之后新增或重新开启，需要软重置机器人，已有数据保留。'
+    : '可用项首次默认勾选，你可以取消任意一项。确认后再连接 QQ；首次未启用的能力，以后开启需要软重置。';
+  const selection = configured ? pluginActivation.selected : pluginActivationDraft;
+  const rows = pluginCatalog().map(item => {
+    const row = document.createElement('label'); row.className = 'plugin-choice';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.value = item.id;
+    input.checked = selection.includes(item.id);
+    input.disabled = !pluginActivation?.available.includes(item.id);
+    input.setAttribute('aria-label', `启用 ${item.name}`);
+    const copy = document.createElement('span');
+    const name = document.createElement('strong'); name.textContent = item.name;
+    const detail = document.createElement('small'); const readiness = pluginReadiness(item.id);
+    detail.textContent = readiness.detail;
+    const status = document.createElement('span'); status.className = 'badge neutral';
+    status.textContent = configured && !input.checked && !input.disabled ? '已关闭 · 再开需软重置' : readiness.label;
+    copy.append(name, detail, status); row.append(input, copy);
+    input.addEventListener('change', () => {
+      const next = input.checked ? [...selection.filter(id => id !== item.id), item.id] : selection.filter(id => id !== item.id);
+      if (configured) return confirmPluginChange(next);
+      pluginActivationDraft = next;
+      $('plugin-first-confirm').checked = false;
+      renderPluginActivation();
+    });
+    return row;
+  });
+  $('plugin-activation-options').replaceChildren(...rows);
+  $('plugin-first-confirm-label').hidden = configured;
+  $('plugin-first-confirm').disabled = !pluginActivation || working || desktopPreview;
+  const submit = $('plugin-activation-submit');
+  submit.hidden = configured && pluginActivation.botEnabled;
+  submit.textContent = configured ? '软重置并启用机器人' : '确认选择，继续连接 QQ';
+  submit.disabled = !pluginActivation || working || desktopPreview || (!configured && !$('plugin-first-confirm').checked);
+}
+async function loadPluginActivation() {
+  if (desktopPreview || dshSaving || pluginActivationLoading) return;
+  const id = ++pluginActivationRequestId;
+  pluginActivationLoading = true;
+  pluginActivationError = '';
+  renderPluginActivation();
+  try {
+    const result = await request('/api/plugins/activation');
+    if (id !== pluginActivationRequestId) return;
+    if (!acceptPluginActivation(result)) throw new Error('暂时无法读取机器人能力设置。');
+  } catch (error) {
+    if (id === pluginActivationRequestId) {
+      pluginActivationError = error.status === 404 ? '当前部署尚未提供能力确认，请让部署者更新云端。' : error.message;
+      feedback('plugin-activation-feedback', pluginActivationError, 'error');
+    }
+  } finally {
+    if (id === pluginActivationRequestId) { pluginActivationLoading = false; renderPluginActivation(); renderDshPlan(); renderSetup(); }
+  }
+}
+function confirmPluginChange(selected, action) {
+  if (!pluginActivation || dshSaving || pendingPluginChange) return;
+  const additions = selected.filter(id => !pluginActivation.selected.includes(id));
+  const reset = action === 'reset' || additions.length > 0;
+  pendingPluginChange = { action: reset ? 'reset' : 'update', selected: [...selected], revision: pluginActivation.revision };
+  $('plugin-change-title').textContent = reset ? '软重置并启用所选能力？' : '确认关闭所选能力？';
+  $('plugin-change-description').textContent = reset
+    ? '新增或重新开启能力需要软重置机器人，使这次连接带上你选好的能力。只有确认后才会执行。'
+    : '关闭后停止这项插件的新导入或查询操作。以后重新开启时，需要软重置机器人。';
+  const names = selected.map(id => pluginCatalog().find(item => item.id === id)?.name).filter(Boolean);
+  $('plugin-change-selection').textContent = names.length ? `调整后启用：${names.join('、')}。` : '调整后不启用任何插件能力。';
+  $('plugin-change-confirm').textContent = reset ? '软重置并启用' : '确认关闭';
+  $('plugin-change-dialog').showModal();
+  renderPluginActivation();
+}
+async function savePluginActivation(change) {
+  if (!pluginActivation || dshSaving) return;
+  dshSaving = true;
+  ++pluginActivationRequestId;
+  pluginActivationLoading = false;
+  renderDshPlan(); renderPluginActivation(); renderSetup();
+  feedback('plugin-activation-feedback', change.action === 'reset' ? '正在软重置并更新能力…' : '正在保存能力选择…');
+  try {
+    const result = await request('/api/plugins/activation', 'POST', { ...change, confirmed: true });
+    if (!acceptPluginActivation(result)) throw new Error('暂时无法读取机器人能力设置。');
+    $('plugin-first-confirm').checked = false;
+    feedback('plugin-activation-feedback', change.action === 'reset' ? '软重置完成，已使用本次选择；已有资料和记忆保留。' : '能力选择已确认，已有资料和记忆保留。', 'success');
+    await refresh();
+    toast(change.action === 'reset' ? '软重置完成，已有数据保留' : '机器人能力已更新');
+  } catch (error) {
+    feedback('plugin-activation-feedback', error.message, 'error');
+    toast(error.message);
+  } finally {
+    dshSaving = false;
+    renderDshPlan(); renderPluginActivation(); renderSetup();
+    void loadPluginActivation();
+  }
 }
 function renderActiveDshPlugins(entries) {
   const statuses = new Map((state?.services?.dsh?.plugins ?? []).map(item => [item.id, item]));
@@ -217,7 +349,9 @@ function renderDshPlan() {
     button.textContent = added ? '正在使用' : '添加';
     button.setAttribute('aria-pressed', String(added));
     button.setAttribute('aria-label', `${added ? '正在使用' : '添加'} ${button.dataset.pluginName}`);
-    button.disabled = added || !state || dshSaving;
+    const available = !pluginActivation || pluginActivation.available.includes(id);
+    if (!available) button.textContent = '此部署未提供';
+    button.disabled = added || !state || !pluginActivation || !available || dshSaving;
   }
   $('dsh-plan-status').textContent = selected.length ? `已添加 ${selected.length} 项` : '未添加';
   const entries = typeof DSH_PLUGIN_CATALOG === 'undefined' ? [] : selected.flatMap((id) => DSH_PLUGIN_CATALOG.filter((item) => item.id === id));
@@ -232,17 +366,17 @@ function renderDshPlan() {
   }).join('\n\n');
 }
 async function toggleDshPlugin(id) {
-  if (!state || dshSaving) return;
+  if (!state || dshSaving || !pluginActivation || !pluginActivation.available.includes(id)) return;
+  if (!pluginActivation.configured) {
+    location.hash = 'overview-qq';
+    openSetupStep('step-qq', true);
+    toast('请先在连接 QQ 前逐项确认机器人能力');
+    return;
+  }
   const selected = selectedDshPlugins();
   const added = selected.includes(id);
   const next = added ? selected.filter((value) => value !== id) : [...selected, id];
-  dshSaving = true;
-  renderDshPlan();
-  try {
-    render(await request('/api/settings', 'PATCH', { dshPlugins: next }));
-    toast(added ? '已移除，已保存的人设和记忆会保留' : '已添加到正在使用，请按提示完成设置');
-  } catch (err) { toast(err.message); }
-  finally { dshSaving = false; renderDshPlan(); }
+  confirmPluginChange(next);
 }
 function buildDshCatalog() {
   if (typeof DSH_PLUGIN_CATALOG === 'undefined') return;
@@ -318,6 +452,20 @@ function setupSelectedProvider() {
   const value = $('setup-provider').value;
   return typeof MODEL_CATALOG === 'undefined' ? undefined : MODEL_CATALOG.find((provider) => provider.id === value);
 }
+function canReuseSetupModelKey() {
+  const saved = setupSnapshot?.model;
+  const provider = setupSelectedProvider();
+  return Boolean(provider && saved?.source === 'console' && saved.hasApiKey === true
+    && typeof saved.baseUrl === 'string' && saved.baseUrl.replace(/\/+$/, '') === provider.base);
+}
+function renderSetupModelKey() {
+  const reuse = canReuseSetupModelKey();
+  $('setup-model-key').required = !reuse;
+  $('setup-model-key').placeholder = reuse ? '留空沿用已保存密钥，或填写新密钥' : '粘贴服务商提供的密钥';
+  $('setup-model-key-note').textContent = reuse
+    ? '此官方接口已有保存的密钥。留空可沿用；填写新密钥会优先验证并保存新密钥。密钥不会回显。'
+    : '首次接入、更换服务商或接口地址时，需要填写对应的密钥。';
+}
 function setProviderPortal(link, provider, baseUrl) {
   let href = provider?.portal;
   if (!href && baseUrl) {
@@ -343,6 +491,7 @@ function renderSetupModelDescription() {
   docs.hidden = !provider;
   if (provider) docs.href = preset?.docs ?? provider.docs;
   else docs.removeAttribute('href');
+  renderSetupModelKey();
 }
 function renderSetupProvider() {
   const provider = setupSelectedProvider();
@@ -470,7 +619,9 @@ function renderSetup() {
     : onebotConfigured ? '已配置 OneBot。用 QQ 私聊完成主人认领即可。'
     : '在 QQ 开放平台创建机器人后，复制它的 AppID 和 ClientSecret。';
   $('setup-model-fields').disabled = !canSave || setupWorking;
-  $('setup-qq-fields').disabled = !canSave || setupWorking;
+  renderSetupModelKey();
+  $('setup-qq-fields').disabled = !canSave || setupWorking || dshSaving || pluginActivation?.configured !== true || pluginActivation.botEnabled !== true;
+  renderPluginActivation();
   $('setup-callback').hidden = !cloud || !qqConfigured;
   $('qq-note').textContent = qqVerified ? 'QQ 已验证回调地址。请确认开启了单聊消息，再生成认领码。'
     : '复制地址，填到 QQ 开放平台的「事件订阅」，开启单聊消息。';
@@ -495,6 +646,9 @@ async function loadSetup() {
 }
 async function saveSetup(kind, payload) {
   if (setupWorking || setupSnapshot?.canSave !== true) return;
+  if (kind === 'qq' && (pluginActivation?.configured !== true || pluginActivation.botEnabled !== true)) {
+    return feedback('setup-qq-feedback', '请先逐项确认机器人能力，再保存 QQ 资料。', 'error');
+  }
   setupWorking = true;
   ++setupRequestId;
   renderSetup();
@@ -527,6 +681,7 @@ function clearImportPreview() {
   memoryImportRequestId++;
   memoryImportSaving = false;
   $('apply-dsh-import').textContent = '预览';
+  $('apply-dsh-import').disabled = false;
   $('dsh-memory-preview').hidden = true;
   $('dsh-memory-candidates').replaceChildren();
   $('dsh-memory-commands').textContent = '';
@@ -544,13 +699,31 @@ function openImport(mode, plugin) {
   clearImportPreview();
   $('dsh-import-title').textContent = mode === 'persona' ? '导入人设' : '挑选相处记忆';
   $('dsh-import-help').textContent = mode === 'persona'
-    ? '选择 AGENT.md 或 SOUL.md，或粘贴想保留的段落。预览后才会填到人设编辑框。'
+    ? importPluginId ? '选择 AGENT.md 或 SOUL.md，或粘贴想保留的段落。预览后需再次确认，才会替换本账号已保存的人设并用于聊天。'
+      : '选择 AGENT.md 或 SOUL.md，或粘贴想保留的段落。预览后才会填到人设编辑框。'
     : '选择 memory_summary.md、MEMORY.md 或粘贴摘要。先预览勾选，再确认存入本人 QQ 记忆，不会自动保存。';
   $('dsh-import-dialog').showModal();
 }
-function previewImport() {
+async function previewImport() {
   if (typeof DSH_PORTABLE === 'undefined') return;
   if (importMode === 'persona' && importedPersona) {
+    if (importPluginId) {
+      const id = ++memoryImportRequestId;
+      $('apply-dsh-import').disabled = true;
+      feedback('dsh-import-result', '正在保存确认后的人设…');
+      try {
+        const next = await request('/api/plugins/persona/import', 'POST', { plugin: importPluginId, persona: importedPersona });
+        if (id !== memoryImportRequestId || redirectingToLogin) return;
+        companionDirty = false;
+        render(next);
+        $('dsh-import-dialog').close();
+        location.hash = 'persona';
+        toast('人设已确认保存，将用于下一条陪伴回复');
+      } catch (error) {
+        if (id === memoryImportRequestId) feedback('dsh-import-result', error.message, 'error');
+      } finally { if (id === memoryImportRequestId) $('apply-dsh-import').disabled = false; }
+      return;
+    }
     $('companion-persona').value = importedPersona;
     companionDirty = true;
     renderCompanion();
@@ -567,10 +740,10 @@ function previewImport() {
     if (!result.text) return feedback('dsh-import-result', '没有可导入的文字。', 'error');
     importedPersona = result.text;
     $('dsh-import-text').value = result.text;
-    $('apply-dsh-import').textContent = '填入人设';
+    $('apply-dsh-import').textContent = importPluginId ? '确认保存人设' : '填入人设';
     feedback('dsh-import-result', result.truncated
       ? `原文 ${result.originalLength} 字，预览仅保留前 1000 字。可以编辑后再预览。`
-      : '请核对上面的预览。填入后仍需按「保存人设与记忆设置」。');
+      : importPluginId ? '请核对预览。确认保存会替换本账号当前人设，并用于接下来的聊天。' : '请核对上面的预览。填入后仍需按「保存人设与记忆设置」。');
     return;
   }
   const result = DSH_PORTABLE.parseMemory(source);
@@ -1098,6 +1271,7 @@ function render(next) {
   if (previousAccount && account !== previousAccount) return goToLogin();
   state = next;
   const { settings, services, logs } = next;
+  if (services.dsh?.activation) acceptPluginActivation(services.dsh.activation);
   const cloud = publicCloud();
   const admin = isAdmin(next);
   const member = isMember(next);
@@ -1169,6 +1343,7 @@ function render(next) {
 async function refresh(show = false) {
   try {
     render(await request('/api/state'));
+    if (!state?.services?.dsh?.activation) void loadPluginActivation();
     if (activeRoute() === 'overview') void loadSetup();
     if (show) toast('运行记录已刷新');
   }
@@ -1279,9 +1454,25 @@ $('setup-model-form').addEventListener('submit', (event) => {
   void saveSetup('model', {
     baseUrl: provider?.base ?? $('setup-base').value.trim(),
     model: preset?.model ?? $('setup-model-id').value.trim(),
-    apiKey: $('setup-model-key').value.trim(),
+    ...($('setup-model-key').value.trim() ? { apiKey: $('setup-model-key').value.trim() }
+      : canReuseSetupModelKey() ? { useSavedKey: true } : { apiKey: '' }),
   });
 });
+$('plugin-first-confirm').addEventListener('change', renderPluginActivation);
+$('plugin-activation-submit').addEventListener('click', async () => {
+  if (!pluginActivation || dshSaving) return;
+  if (pluginActivation.configured) return confirmPluginChange(pluginActivation.selected, 'reset');
+  if (!$('plugin-first-confirm').checked) return;
+  await savePluginActivation({ action: 'activate', selected: [...pluginActivationDraft], revision: pluginActivation.revision });
+  if (pluginActivation?.botEnabled) $('setup-qq-id').focus();
+});
+$('plugin-change-cancel').addEventListener('click', () => $('plugin-change-dialog').close());
+$('plugin-change-confirm').addEventListener('click', () => {
+  const change = pendingPluginChange;
+  $('plugin-change-dialog').close();
+  if (change) void savePluginActivation(change);
+});
+$('plugin-change-dialog').addEventListener('close', () => { pendingPluginChange = undefined; renderPluginActivation(); });
 $('setup-qq-form').addEventListener('submit', (event) => {
   event.preventDefault();
   void saveSetup('qq', { appId: $('setup-qq-id').value.trim(), clientSecret: $('setup-qq-secret').value.trim() });

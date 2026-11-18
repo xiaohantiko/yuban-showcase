@@ -104,6 +104,7 @@
                   <a id="setup-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a>
                   <div id="setup-custom-model" class="setup-custom" hidden><label for="setup-base">接口地址</label><input id="setup-base" type="url" placeholder="https://example.com/v1"><label for="setup-model-id">模型 ID</label><input id="setup-model-id" type="text" maxlength="160" placeholder="服务商提供的模型名称"><small>自定义地址需先由部署者在云端允许。</small></div>
                   <label for="setup-model-key">API 密钥</label><input id="setup-model-key" type="password" required maxlength="1024" placeholder="粘贴服务商提供的密钥" spellcheck="false" autocomplete="off">
+                  <small id="setup-model-key-note" aria-live="polite">首次接入或更换服务商时，需要填写对应的密钥。</small>
                   <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noopener noreferrer">查看接口文档</a></div>
                 </fieldset>
               </form>
@@ -119,6 +120,14 @@
           <details class="card setup-step" id="step-qq">
             <summary><span class="step-number">3</span><span class="step-label"><strong>连接 QQ</strong><small>填机器人资料，再用你的 QQ 认领</small></span><span class="badge neutral" id="qq-status">待连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
             <div class="step-body"><p id="setup-qq-note">在 QQ 开放平台创建机器人后，复制它的 AppID 和 ClientSecret。</p>
+              <section class="plugin-activation" aria-labelledby="plugin-activation-title">
+                <div class="card-title"><h3 id="plugin-activation-title">先选好机器人能力</h3><span class="badge neutral" id="plugin-activation-status">正在读取…</span></div>
+                <p id="plugin-activation-note">首次启用前，请逐项确认。勾选不会替代网关配置或 QQ 记忆同意。</p>
+                <fieldset id="plugin-activation-fields" disabled aria-label="机器人插件能力"><div id="plugin-activation-options"></div></fieldset>
+                <label class="plugin-ack" id="plugin-first-confirm-label"><input type="checkbox" id="plugin-first-confirm">我已确认以上选择，并了解各项实际可用条件</label>
+                <button type="button" class="button primary" id="plugin-activation-submit" disabled>确认选择，继续连接 QQ</button>
+                <p class="setup-feedback" id="plugin-activation-feedback" aria-live="polite"></p>
+              </section>
               <form class="setup-form" id="setup-qq-form" autocomplete="off">
                 <fieldset id="setup-qq-fields" disabled>
                   <label for="setup-qq-id">机器人 AppID</label><input id="setup-qq-id" type="text" required maxlength="32" inputmode="numeric" placeholder="机器人资料里的一串数字">
@@ -316,7 +325,7 @@
       <div class="page-intro"><span class="eyebrow"><svg><use href="#i-book"/></svg> 新手说明</span><h1>第一次用宇伴</h1><p>App 用来设置。日常聊天、查资料、听语音，都在 QQ 里。</p></div>
       <section class="card ai-card" aria-labelledby="help-start-title"><div class="card-title"><h2 id="help-start-title">先准备这三样</h2></div><ol class="guide-steps"><li><strong>宇伴云端网址。</strong>还没有的话，先部署一次，把部署后的 HTTPS 网址和管理口令拿到手。<a href="https://github.com/xiaohantiko/yuban-showcase#本地运行" target="_blank" rel="noreferrer">查看部署说明</a>。</li><li><strong>任意一家 AI 的 API 密钥。</strong>有哪家的就选哪家；不需要为其他模型注册账号。宇伴会用它测试一条很短的回复。</li><li><strong>一个 QQ 机器人。</strong>到 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台</a>创建，找到 AppID 和 ClientSecret，回宇伴按提示验证、复制回调地址。</li></ol><a class="button primary" href="#overview">回到三步向导</a></section>
       <section class="card ai-card" aria-labelledby="help-owner-title"><div class="card-title"><h2 id="help-owner-title">第一次私聊，先认领主人</h2></div><ol class="guide-steps"><li>在「开始使用 → 连接 QQ → 认领主人」填一个可选称呼，点击「生成认领码」。</li><li>复制整条认领消息，用你自己的 QQ 在机器人私聊里发送。认领码 10 分钟内有效，只能用一次。</li><li>看到认领成功的回复，就可以开始聊天。之后可在 QQ 私聊发「叫我 小韩」修改称呼。</li></ol><p class="import-help">宇伴会绑定发出有效认领码的 QQ 账号。别人先发消息，或说「我是你主人」，都不会改变身份。</p></section>
-      <section class="card ai-card" aria-labelledby="help-chat-title"><div class="card-title"><h2 id="help-chat-title">认领后，直接在 QQ 发消息</h2></div><dl class="guide-examples"><div><dt>「今天有点累，想说说话」</dt><dd>开始陪伴聊天。</dd></div><div><dt>「帮我查一下极光怎么形成」</dt><dd>查资料并返回来源。</dd></div><div><dt>「用语音回复：给我讲个故事」</dt><dd>配置语音服务后可用。</dd></div><div><dt>「开启记忆」或「开启问候」</dt><dd>分别打开相处记忆和主动问候，随时能关。</dd></div></dl></section>
+      <section class="card ai-card" aria-labelledby="help-chat-title"><div class="card-title"><h2 id="help-chat-title">认领后，直接在 QQ 发消息</h2></div><p>分几条讲同一件事就好。宇伴会看上下文和停顿，等你说得差不多再一起回；有时也会连发两三条短消息。</p><dl class="guide-examples"><div><dt>「今天有点累，想说说话」</dt><dd>开始陪伴聊天。</dd></div><div><dt>「帮我查一下极光怎么形成」</dt><dd>查资料并返回来源。</dd></div><div><dt>「用语音回复：给我讲个故事」</dt><dd>配置语音服务后可用。</dd></div><div><dt>「开启记忆」或「开启问候」</dt><dd>分别打开相处记忆和主动问候，随时能关。</dd></div></dl></section>
       <section class="card ai-card" aria-labelledby="help-extra-title"><div class="card-title"><h2 id="help-extra-title">碰到问题时</h2></div><details class="ai-example"><summary>只想试试，需要部署吗？</summary><p>可以离线写人设和查看安装清单。QQ 收发和主动问候需要部署。</p></details><details class="ai-example"><summary>为什么已经填了机器人，QQ 还是没回复？</summary><p>先检查向导里的回调状态，再确认 QQ 平台订阅了单聊消息。发一条测试后，到<a href="#activity">运行记录</a>看收发结果。</p></details><details class="ai-example"><summary>我在用 GPT，原来的 DSH 插件怎么用？</summary><p>在「人设与记忆」导入 AGENT.md、SOUL.md 或挑选记忆摘要，GPT 模型就能使用这些内容。添加便携插件后，按提示选择内容并确认保存。</p></details></section>
     </section>
 
@@ -355,6 +364,13 @@
     <p class="setup-feedback" id="dsh-import-result" aria-live="polite"></p>
     <div id="dsh-memory-preview" class="dsh-memory-preview" hidden><p>勾选并确认后，可存入本账号已开启的 QQ 记忆；也可以复制命令，在 QQ 单聊逐条发送。</p><fieldset id="dsh-memory-candidates" aria-label="选择要保留的记忆"></fieldset><pre class="model-config" id="dsh-memory-commands"></pre><div class="setup-actions"><button type="button" class="button primary" id="save-memory-import" disabled>存入本账号 QQ 记忆</button><button type="button" class="button subtle" id="copy-memory-commands" disabled>复制记忆命令</button></div><p class="setup-feedback" id="save-memory-import-feedback" aria-live="polite"></p></div>
     <div class="dialog-actions"><button class="button subtle" id="cancel-dsh-import" type="button">取消</button><button class="button primary" id="apply-dsh-import" type="button">预览</button></div>
+  </dialog>
+  <dialog id="plugin-change-dialog" aria-labelledby="plugin-change-title">
+    <div class="dialog-header"><h2 id="plugin-change-title">确认能力调整</h2></div>
+    <p id="plugin-change-description" class="import-help"></p>
+    <p id="plugin-change-selection" class="import-help"></p>
+    <p class="import-help">QQ 资料、模型密钥、绑定、人设和记忆都会保留。软重置不会卸载或重新安装 QQ 应用。</p>
+    <div class="dialog-actions plugin-change-actions"><button type="button" class="button subtle" id="plugin-change-cancel">取消</button><button type="button" class="button primary" id="plugin-change-confirm">确认</button></div>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>
 </body>

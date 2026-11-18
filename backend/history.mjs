@@ -29,8 +29,8 @@ export function boundStoredHistory(messages) {
   }));
 }
 
-export function boundedChatContext(messages, latestText) {
-  const latest = clip(latestText, MAX_STORED_TEXT);
+export function boundedChatContext(messages, latestText, { story = false } = {}) {
+  const latest = clip(latestText, story ? MAX_CHAT_CHARACTERS : MAX_STORED_TEXT);
   const recent = [{ role: 'user', text: latest }];
   let remaining = MAX_CHAT_CHARACTERS - latest.length;
   const oldest = Math.max(0, messages.length - (MAX_CHAT_MESSAGES - 1));

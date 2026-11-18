@@ -102,7 +102,7 @@ export const voiceRequest = /^(?:请|可以)?(?:用|发)?语音(?:回复|回答)
 export const commandOn = /^(?:\/|#)?\s*(?:开启问候|打开问候|启用问候)$/;
 export const commandOff = /^(?:\/|#)?\s*(?:关闭问候|停用问候|取消问候|停止问候)$/;
 
-export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName } = {}) {
+export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName, story = false } = {}) {
   const { companionName, companionPersona, memoryEnabled = true } = settings;
   const wantsVoice = voice || settings.voiceReplies || voiceRequest.test(text);
   const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
@@ -111,7 +111,7 @@ export async function createReply(providers, settings, messages, text, { mode, v
   let result;
   try {
     result = await providers.reply({
-      messages: boundedChatContext(kind === 'search' ? [] : messages, query),
+      messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story }),
       mode: kind, companionName, companionPersona,
       ...(typeof ownerName === 'string' ? { ownerName } : {}),
       memoryContext: memoryEnabled ? memoryContext : undefined,
@@ -120,7 +120,8 @@ export async function createReply(providers, settings, messages, text, { mode, v
     result = { text: kind === 'search' ? '这次没能连上资料来源，稍后再试试好吗？' : '刚才没能生成回复。你想接着聊时，可以再发一句。' };
   }
   const sources = Array.isArray(result?.sources) ? result.sources.filter((item) => typeof item?.title === 'string' && /^https?:\/\//i.test(item?.url)).slice(0, 5) : [];
-  return newMessage('assistant', result?.text || '我在听。你想从哪里聊起？', {
+  return newMessage('assistant', result?.text || '怎么啦，想跟我说说吗？', {
+    ...(kind === 'chat' && !wantsVoice && !sources.length && ((result?.text?.length ?? 0) >= 52 || /\n\s*\n/u.test(result?.text ?? '')) ? { kind: 'chat' } : {}),
     at, ...(sources.length ? { sources } : {}), ...(wantsVoice && !sources.length ? { voice: true } : {}),
   });
 }
