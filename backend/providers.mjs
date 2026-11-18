@@ -267,14 +267,14 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
     voiceAvailable: voiceConfigured || Boolean(localAudio),
     voiceProvider: voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
 
-    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, story = false, strict = false }) {
+    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, story = false, strict = false }) {
       const input = messages.findLast((message) => message.role === 'user')?.text?.trim() ?? '';
       const lookup = lookupText(input);
       if (mode === 'search' || (!strict && lookup !== null)) return research(lookup ?? input, strict);
       const displayName = companionName || name;
       if (!modelConfigured) {
         if (strict) throw new Error('尚未配置 AI 模型');
-        const reply = demoCompanionReply(messages, displayName, ownerName);
+        const reply = demoCompanionReply(messages, displayName, ownerName, timeContext);
         const hasEarlierReply = messages.some(({ role, kind }) => role === 'assistant' && kind !== 'greeting');
         return { text: hasEarlierReply ? reply : `（演示模式）${reply}` };
       }
@@ -283,11 +283,11 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       if (observations) history.unshift(observations);
       try {
         const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
-          turnContext: turnContext ?? companionTurnContext(messages, input) });
+          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext });
         return { text: await complete(system, history) };
       } catch (error) {
         if (strict) throw error;
-        return { text: `模型暂时连不上，先用本地模式陪你聊。\n\n${demoCompanionReply(messages, displayName, ownerName)}` };
+        return { text: `模型暂时连不上，先用本地模式陪你聊。\n\n${demoCompanionReply(messages, displayName, ownerName, timeContext)}` };
       }
     },
 
@@ -336,8 +336,8 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       return { bytes, contentType, filename: `yuban-voice.${extension}` };
     },
 
-    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes } = {}) {
-      const context = { messages, companionPersona, idleMinutes, memoryContext };
+    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes, timeContext } = {}) {
+      const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext };
       if (modelConfigured) {
         const observations = companionMemoryMessage({ traits: memoryContext?.traits, personality: memoryContext?.personality });
         const history = chatHistory(messages, 6, 360, true);

@@ -121,4 +121,7 @@ dialog{max-width:min(520px,calc(100% - 32px));border:1px solid var(--line);borde
 @media(max-width:700px){.setup-step summary{padding:10px 11px;gap:8px;min-height:58px}.step-number{width:27px;height:27px}.step-label small{font-size:11px}.step-body{padding-left:0;margin-inline:11px}.setup-finished{align-items:flex-start}.guide-examples>div{flex-direction:column;gap:3px}}
 .owner-setup .card-title h3{margin:0}.owner-setup .card-title{margin-bottom:8px}.owner-setup #owner-note{overflow-wrap:anywhere}.owner-setup #owner-fields{max-width:420px}.owner-claim{border-top:1px solid var(--line);margin-top:14px;padding-top:3px}.owner-claim .webhook{flex-wrap:wrap}.owner-claim .webhook code{flex:1 0 156px;color:var(--ink);font-size:13px}.owner-setup fieldset:disabled button{cursor:default}
 
+.time-zone-row { flex-wrap: wrap; }
+.time-zone-row select { max-width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel, #fff); color: var(--ink); font: inherit; }
+
 .public-brand-mark { display: grid; place-items: center; width: 100%; height: 100%; background: #ebdef8; color: #493764; font-size: 2em; font-weight: 700; }

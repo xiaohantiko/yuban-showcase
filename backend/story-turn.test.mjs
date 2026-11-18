@@ -76,7 +76,7 @@ test('short neutral observations get a brief pause while contact, feelings and d
   assert.equal(dueStory(second.state, second.state.nextFlushAt), '窗台上有只鸟\n翅膀还挂着雨水');
   for (const text of ['在吗', '你在不在', '嗨', '我回来了', '晚安', '好累', '有点难过', '有点烦', '抱抱', '我今天很想你',
     '陪我一会儿', '你能陪我聊会儿吗', '听我说说', '你叫什么', '你是谁', '你今天怎么样', '说说你自己', '这是什么意思', '今天吃什么',
-    '请帮我查预算', '你会帮我查预算吗']) {
+    '请帮我查预算', '你会帮我查预算吗', '今晚别催我睡觉', '今天别提醒', '以后不要提醒我睡觉']) {
     assert.equal(observeStory(null, text).action, 'reply', text);
   }
 });

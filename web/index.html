@@ -274,7 +274,8 @@
       <form class="card settings" id="settings">
         <div class="setting-row"><div><h2>主动问候</h2><p>认领主人后，在 QQ 私聊发「开启问候」即可。</p></div><input type="checkbox" id="greet-enabled" name="enabled" class="switch-input" aria-label="启用主动问候"></div>
         <div class="setting-row"><label for="delay"><strong>等待时间</strong><small>从对方上一条消息开始计时。每段沉默期最多问候一次。</small></label><div class="time-input"><input id="delay" name="afterMinutes" type="number" min="1" max="10080" required><span>分钟</span></div></div>
-        <div class="setting-row"><label for="quiet-enabled"><strong>夜间免打扰</strong><small>免打扰期间到期的问候，会在结束后发出。使用北京时间。</small></label><input type="checkbox" id="quiet-enabled" name="quietEnabled" class="switch-input"></div>
+        <div class="setting-row time-zone-row"><label for="chat-time-zone"><strong>对话时区</strong><small>夜聊和主动问候都按这个时区。</small></label><select id="chat-time-zone" name="timeZone"><option value="Asia/Shanghai">北京时间</option></select></div>
+        <div class="setting-row"><label for="quiet-enabled"><strong>夜间免打扰</strong><small>你主动发消息时照常回复。到期的主动问候会等到免打扰结束。</small></label><input type="checkbox" id="quiet-enabled" name="quietEnabled" class="switch-input"></div>
         <div class="setting-row quiet-times"><div class="time-input"><label for="quiet-start">开始</label><input id="quiet-start" name="quietStart" type="time" required></div><span>—</span><div class="time-input"><label for="quiet-end">结束</label><input id="quiet-end" name="quietEnd" type="time" required></div></div>
         <div class="setting-row"><label for="voice-default"><strong>默认语音回复</strong><small>开启后，支持的闲聊回复优先发 QQ 语音；资料和问候仍发文字。</small></label><input type="checkbox" id="voice-default" name="voiceReplies" class="switch-input"></div>
         <div class="form-footer"><span id="opted-in">—</span><button class="button primary" type="submit">保存设置</button></div>

@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const routes = { admin: '管理后台', overview: '开始使用', ai: '高级接入', persona: '人设与记忆', greetings: '主动问候', usage: '用量看板', help: '使用说明', activity: '运行记录', feedback: '问题反馈' };
-const fields = { enabled: 'greet-enabled', afterMinutes: 'delay', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
+const fields = { enabled: 'greet-enabled', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
 const field = (name) => $(fields[name]);
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const ownerTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -1259,6 +1259,17 @@ function renderLogs(logs) {
     root.append(row);
   }
 }
+function renderTimeZone(savedZone) {
+  const select = field('timeZone');
+  const beijing = 'Asia/Shanghai';
+  const current = savedZone || beijing;
+  const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const zones = new Map([[beijing, '北京时间']]);
+  if (device && device !== beijing) zones.set(device, `当前设备（${device}）`);
+  if (!zones.has(current)) zones.set(current, `已保存（${current}）`);
+  select.replaceChildren(...Array.from(zones, ([value, label]) => new Option(label, value)));
+  select.value = current;
+}
 function syncQuiet() {
   field('quietStart').disabled = !field('quietEnabled').checked;
   field('quietEnd').disabled = !field('quietEnabled').checked;
@@ -1332,7 +1343,8 @@ function render(next) {
   if (!dirty) {
     for (const name of Object.keys(fields)) {
       const input = field(name);
-      if (input.type === 'checkbox') input.checked = settings[name];
+      if (name === 'timeZone') renderTimeZone(settings.timeZone);
+      else if (input.type === 'checkbox') input.checked = settings[name];
       else input.value = settings[name];
     }
     syncQuiet();

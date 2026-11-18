@@ -462,7 +462,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
             thread.storyTurn = null;
             thread.storyTarget = null;
           }
-          if (memoryCommand.clearHistory) thread.messages = [];
+          if (memoryCommand.clearHistory) { thread.messages = []; thread.timeState = null; }
           message = newMessage('assistant', memoryCommand.text);
         } else if (commandOn.test(text) || commandOff.test(text)) {
           const canGreet = adapter.capabilities?.proactive;
@@ -493,11 +493,12 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
           }
           text = story.action === 'flush' ? story.text : (story.text ?? text).slice(0, 2000);
           const turn = await replyToOwner({
-            providers, settings, messages: thread.messages, text, memory: thread.memory, ownerName: owner.name, at: clock(),
+            providers, settings, messages: thread.messages, text, memory: thread.memory, timeState: thread.timeState, ownerName: owner.name, at: clock(),
             story: story.action === 'flush',
           });
           message = turn.reply;
           completion = turn.completion;
+          thread.timeState = turn.timeState;
           if (state.settings.memoryEnabled !== false) thread.memory = turn.memory;
           addMessage(thread, newMessage('user', text, { at: clock(), ...(turn.searching ? { kind: 'search' } : {}) }));
           addMessage(thread, turn.searching ? { ...message, kind: 'search' } : message);
