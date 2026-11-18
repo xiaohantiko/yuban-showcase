@@ -166,29 +166,38 @@ export function createQQAdapter({ appId = '', clientSecret = '', apiBase = API_B
     if (!proactive && (typeof target.messageId !== 'string' || !target.messageId)) {
       throw qqError('QQ 回复缺少原消息 ID。', 'QQ_INVALID_TARGET');
     }
-    if (!audio && (typeof text !== 'string' || !text.trim())) {
+    const content = typeof text === 'string' ? text.trim() : '';
+    if (!audio && !content) {
       throw qqError('QQ 消息内容为空。', 'QQ_EMPTY_MESSAGE');
     }
 
     const endpoint = `/v2/${target.type === 'c2c' ? 'users' : 'groups'}/${encodeURIComponent(target.id)}`;
     const reply = proactive ? { is_wakeup: true } : { msg_id: target.messageId, msg_seq: sequence };
-    const voice = audio && voiceFilePayload(audio);
-    const token = await tokenForSend();
-    let payload;
-    if (voice) {
-      const file = await post(`${endpoint}/files`, { ...voice, file_type: 3, srv_send_msg: false }, token);
-      if (typeof file.file_info !== 'string' || !file.file_info) {
-        throw qqError('QQ 语音上传未返回文件信息。', 'QQ_INVALID_RESPONSE');
-      }
-      payload = { msg_type: 7, content: ' ', media: { file_info: file.file_info } };
-    } else {
-      payload = { msg_type: 0, content: text.trim() };
+    let voice;
+    try {
+      voice = audio && voiceFilePayload(audio);
+    } catch (error) {
+      if (!content) throw error;
     }
+    const token = await tokenForSend();
+    let payload = { msg_type: 0, content };
+    if (voice) {
+      try {
+        const file = await post(`${endpoint}/files`, { ...voice, file_type: 3, srv_send_msg: false }, token);
+        if (typeof file.file_info !== 'string' || !file.file_info.trim()) {
+          throw qqError('QQ 语音上传未返回文件信息。', 'QQ_INVALID_RESPONSE');
+        }
+        payload = { msg_type: 7, content: ' ', media: { file_info: file.file_info } };
+      } catch (error) {
+        if (!content) throw error;
+      }
+    }
+    // The upload only creates media. Submit once outside the catch to avoid duplicate delivery after an uncertain result.
     const result = await post(`${endpoint}/messages`, { ...reply, ...payload }, token);
     if (typeof result.id !== 'string' || !result.id) {
       throw qqError('QQ 接口未确认消息已发送。', 'QQ_INVALID_RESPONSE');
     }
-    return { messageId: result.id, voice: Boolean(voice) };
+    return { messageId: result.id, voice: payload.msg_type === 7 };
   }
 
   return { configured, capabilities, verify, handshake, parseEvent, send };

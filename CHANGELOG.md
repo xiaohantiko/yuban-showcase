@@ -2,6 +2,13 @@
 
 这里记录公开版提供的功能和安装包变化。对应的构建与校验文件见 [GitHub Releases](https://github.com/xiaohantiko/yuban-showcase/releases)。
 
+## 0.1.11 公开版 · 2026-11-18
+
+- 新增 `gpt-6.2-sol` 和 `qwen4-max` 选项，模型向导会显示已保存的模型和对应说明。
+- 自托管部署可以通过 DeepSeek 合成语音。将 `VOICE_BASE_URL` 设为 `https://api.deepseek.com/v1`，配置 `VOICE_API_KEY`。`VOICE_NAME` 可选 `stella` 或 `tide`。QQ 上传失败时可以改发文字。
+- 后台记忆整理期间可继续处理普通消息和清空命令。主动问候在到期后加载接入配置。
+- macOS 和 Windows 桌面安装包同步更新。模型和中转功能需要自托管服务同步更新。
+
 ## 0.1.10 公开版 · 2026-11-16
 
 - 提供 macOS 通用 DMG 和 Windows x64 解压运行包。桌面端支持填写自己的 HTTPS 管理台地址，两个平台的发布包都经过解包和启动检查。

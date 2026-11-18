@@ -311,7 +311,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       } catch (err) { log(transport, kind, 'error', transportError(err)); }
     }
     try {
-      await withThread(lockKey(transport, scope, parsed.target), async () => {
+      const learning = await withThread(lockKey(transport, scope, parsed.target), async () => {
         const text = parsed.text.trim().slice(0, 2000);
         if (!text || !await transportCurrent(runtime, transport)) return;
         const identity = ownerIdentity(transport, parsed.target, scope);
@@ -396,34 +396,41 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
           if (!await push(runtime, transport, parsed.target, message, { owner })) return;
           log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : '已发送对话回复');
         } catch (err) { log(transport, kind, 'error', transportError(err)); }
-        if (completion) {
-          const learned = await completion;
-          if (learned && learned !== thread.memory && await transportCurrent(runtime, transport) && sameBinding(owner)
-            && state.channels[key] === thread && state.settings.memoryEnabled !== false) {
-            thread.memory = learned;
-            save();
-          }
-        }
+        return completion ? { completion, owner, key, thread } : null;
       });
+      // Learning may finish after delivery. Release the conversation lock first so
+      // new chat and memory controls can run, then discard superseded observations.
+      if (learning) {
+        const { completion, owner, key, thread } = learning;
+        const learned = await completion;
+        if (learned && learned !== thread.memory && await transportCurrent(runtime, transport) && sameBinding(owner)
+          && state.channels[key] === thread && state.settings.memoryEnabled !== false) {
+          thread.memory = learned;
+          save();
+        }
+      }
     } finally {
       if (!committed) seen.delete(seenKey);
     }
   }
   async function tick() {
     const now = clock();
-    if (stopped || !state.settings.enabled || isQuiet(now, state.settings)) return;
+    const settings = state.settings;
+    if (stopped || !settings.enabled || isQuiet(now, settings)) return;
+    const candidate = state.owner;
+    const key = channelKey(candidate);
+    const thread = key ? state.channels[key] : null;
+    if (!thread?.optedIn || now - thread.lastUserAt >= 30 * DAY || nextGreeting(thread, settings, now) !== now) return;
+    const target = { type: 'c2c', id: candidate.id };
+    const lock = lockKey(candidate.transport, candidate.scope, target);
+    if (locks.has(lock) || greetingInFlight.has(key)) return;
     const runtime = await services();
     if (stopped) return;
     const owner = currentOwner(runtime);
     if (!owner || !runtime.transports[owner.transport].capabilities?.proactive) return;
-    const target = { type: 'c2c', id: owner.id };
-    const key = channelKey(owner);
-    const lock = lockKey(owner.transport, owner.scope, target);
-    if (locks.has(lock) || greetingInFlight.has(key)) return;
-    const thread = state.channels[key];
-    const settings = state.settings;
     const time = clock();
-    if (!sameBinding(owner) || !thread?.optedIn || time - thread.lastUserAt >= 30 * DAY
+    if (!sameBinding(candidate) || state.channels[key] !== thread || state.settings !== settings
+      || locks.has(lock) || greetingInFlight.has(key) || !thread.optedIn || time - thread.lastUserAt >= 30 * DAY
       || nextGreeting(thread, settings, time) !== time) return;
     const activity = thread.lastUserAt;
     greetingInFlight.add(key);

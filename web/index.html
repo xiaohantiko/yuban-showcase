@@ -99,6 +99,7 @@
                 <fieldset id="setup-model-fields" disabled>
                   <label for="setup-provider">AI 服务商</label><select id="setup-provider" required></select>
                   <label for="setup-preset-model" id="setup-preset-label" hidden>模型</label><select id="setup-preset-model" hidden disabled></select>
+                  <small id="setup-model-description"></small>
                   <div id="setup-custom-model" class="setup-custom" hidden><label for="setup-base">接口地址</label><input id="setup-base" type="url" placeholder="https://example.com/v1"><label for="setup-model-id">模型 ID</label><input id="setup-model-id" type="text" maxlength="160" placeholder="服务商提供的模型名称"><small>自定义地址需先由部署者在云端允许。</small></div>
                   <label for="setup-model-key">API 密钥</label><input id="setup-model-key" type="password" required maxlength="1024" placeholder="粘贴服务商提供的密钥" spellcheck="false" autocomplete="off">
                   <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noreferrer">去服务商查看密钥说明</a></div>
@@ -109,7 +110,7 @@
                 <summary>语音回复怎么接入</summary>
                 <p id="setup-provider-voice" aria-live="polite"></p>
                 <a id="setup-provider-voice-docs" class="link guide-link" target="_blank" rel="noreferrer" hidden>查看官方语音文档</a>
-                <p>由部署者在云端配置语音接口、密钥、模型和音色。配置好后，在 QQ 私聊发送「用语音回复：给我讲个故事」，或在「主动问候」里开启「默认语音回复」。</p>
+                <p>由部署者按服务商要求在云端配置语音服务和密钥。配置好后，在 QQ 私聊发送「用语音回复：给我讲个故事」，或在「主动问候」里开启「默认语音回复」。</p>
               </details>
             </div>
           </details>

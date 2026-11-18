@@ -12,7 +12,7 @@ const usageMetrics = [
 ];
 const usageProviders = new Map([
   ['openai', 'OpenAI'], ['deepseek', 'DeepSeek'], ['qwen', '千问'], ['doubao', '豆包'],
-  ['kimi', '月之暗面'], ['compatible', '兼容接口'], ['other', '其他服务商'],
+  ['kimi', '其他服务商'], ['compatible', '其他服务商'], ['other', '其他服务商'],
 ]);
 const macPreview = location.protocol === 'yuban-preview:';
 const desktopPreview = macPreview || location.origin === 'https://yuban-preview.invalid';
@@ -26,6 +26,7 @@ let setupSnapshot;
 let setupWorking = false;
 let setupLoaded = false;
 let setupAutoOpened = false;
+let setupModelSelectionSet = false;
 let setupRequestId = 0;
 let ownerSnapshot;
 let ownerClaim;
@@ -114,7 +115,7 @@ async function copyAddress(id, message) {
 }
 function renderModelCatalog() {
   if (typeof MODEL_CATALOG === 'undefined' || !MODEL_CATALOG.length) return;
-  const models = MODEL_CATALOG.flatMap(({ base, docs, models }) => models.map((item) => ({ ...item, base, docs })));
+  const models = MODEL_CATALOG.flatMap(({ base, docs, models }) => models.map((item) => ({ base, docs, ...item })));
   const list = $('model-options');
   const buttons = [];
   function show(index) {
@@ -268,6 +269,13 @@ function setupSelectedProvider() {
   const value = $('setup-provider').value;
   return typeof MODEL_CATALOG === 'undefined' ? undefined : MODEL_CATALOG.find((provider) => provider.id === value);
 }
+function renderSetupModelDescription() {
+  const provider = setupSelectedProvider();
+  const preset = provider?.models.find(({ model }) => model === $('setup-preset-model').value);
+  const note = $('setup-model-description');
+  note.textContent = preset?.note ?? '';
+  note.hidden = !preset?.note;
+}
 function renderSetupProvider() {
   const provider = setupSelectedProvider();
   const models = provider?.models ?? [];
@@ -277,6 +285,7 @@ function renderSetupProvider() {
   picker.hidden = !showPicker;
   picker.disabled = !showPicker;
   $('setup-preset-label').hidden = !showPicker;
+  renderSetupModelDescription();
 
   const custom = $('setup-provider').value === 'custom';
   $('setup-custom-model').hidden = !custom;
@@ -291,6 +300,23 @@ function renderSetupProvider() {
   voiceDocs.hidden = !provider?.voiceDocs;
   if (provider?.voiceDocs) voiceDocs.href = provider.voiceDocs;
   else voiceDocs.removeAttribute('href');
+}
+function restoreSetupModel(model) {
+  if (setupModelSelectionSet || !model?.model) return;
+  setupModelSelectionSet = true;
+  const savedBase = model.baseUrl?.replace(/\/+$/, '');
+  const provider = typeof MODEL_CATALOG === 'undefined' ? undefined : MODEL_CATALOG.find((entry) =>
+    (entry.base === savedBase || (entry.id === 'deepseek' && savedBase === `${entry.base}/v1`))
+      && entry.models.some((preset) => preset.model === model.model));
+  $('setup-provider').value = provider?.id ?? 'custom';
+  renderSetupProvider();
+  if (provider) {
+    $('setup-preset-model').value = model.model;
+    renderSetupModelDescription();
+  } else {
+    $('setup-base').value = savedBase ?? '';
+    $('setup-model-id').value = model.model;
+  }
 }
 function initializeSetup() {
   const picker = $('setup-provider');
@@ -393,7 +419,10 @@ async function loadSetup() {
   const [result] = await Promise.allSettled([request('/api/setup'), loadOwner()]);
   if (id !== setupRequestId) return;
   setupLoaded = true;
-  if (result.status === 'fulfilled' && result.value) setupSnapshot = result.value;
+  if (result.status === 'fulfilled' && result.value) {
+    setupSnapshot = result.value;
+    restoreSetupModel(setupSnapshot.model);
+  }
   renderSetup();
 }
 async function saveSetup(kind, payload) {
@@ -1077,7 +1106,11 @@ $('refresh').addEventListener('click', () => refresh(true));
 $('setup-connect').addEventListener('click', async () => {
   try { await request('/app/cloud-connection', 'POST'); } catch (err) { toast(err.message); }
 });
-$('setup-provider').addEventListener('change', renderSetupProvider);
+$('setup-provider').addEventListener('change', () => { setupModelSelectionSet = true; renderSetupProvider(); });
+$('setup-preset-model').addEventListener('change', () => { setupModelSelectionSet = true; renderSetupModelDescription(); });
+for (const id of ['setup-base', 'setup-model-id', 'setup-model-key']) {
+  $(id).addEventListener('input', () => { setupModelSelectionSet = true; });
+}
 $('setup-model-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const provider = setupSelectedProvider();

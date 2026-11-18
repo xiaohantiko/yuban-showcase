@@ -15,6 +15,16 @@ const modelBases = new Set([
   'https://api.openai.com/v1',
 ]);
 const QQ_TOKEN_URL = 'https://api.bot.qq.com/app/getAppAccessToken';
+const modelVerificationErrors = new Map([
+  [400, '模型服务未接受验证请求，请检查模型 ID 和接口兼容性。'],
+  [401, '模型服务未接受 API Key，请检查密钥是否有效，并确认它属于所选服务商。'],
+  [402, '模型服务账户余额或额度不足，请在服务商控制台检查。'],
+  [403, '模型服务拒绝访问，请检查模型调用权限，以及账号和部署所在地区是否受支持。'],
+  [404, '未找到模型或接口，请检查模型 ID、接口地址和模型是否仍可用。'],
+  [408, '模型服务响应超时，请稍后重试或选择响应更快的模型。'],
+  [429, '模型服务额度或请求频率受限，请检查账户余额、可用额度和频率限制，稍后重试。'],
+  [504, '模型服务响应超时，请稍后重试或选择响应更快的模型。'],
+]);
 
 function fail(status, message) {
   throw Object.assign(new Error(message), { status });
@@ -82,6 +92,7 @@ function credentials(kind, payload, env) {
 async function verify(kind, value, fetchImpl, onUsage) {
   const model = kind === 'model';
   const url = model ? `${value.baseUrl}/chat/completions` : QQ_TOKEN_URL;
+  let responseStatus;
   try {
     async function request(reportUsage) {
       const response = await fetchImpl(url, {
@@ -92,6 +103,7 @@ async function verify(kind, value, fetchImpl, onUsage) {
         redirect: 'manual',
         signal: AbortSignal.timeout(15000),
       });
+      responseStatus = response.status;
       if (!response.ok) throw new Error();
       const result = await response.json();
       if (model) reportUsage(result?.usage);
@@ -102,8 +114,18 @@ async function verify(kind, value, fetchImpl, onUsage) {
       const label = value.model === value.apiKey ? null : value.model;
       await meterModelRequest({ onUsage, endpoint: url, model: label }, request);
     } else await request();
-  } catch {
-    fail(502, model ? '模型测试未通过，请检查 API Key、模型 ID 和调用权限。' : 'QQ 凭据测试未通过，请检查 AppID 和 ClientSecret。');
+  } catch (error) {
+    if (!model) fail(502, 'QQ 凭据测试未通过，请检查 AppID 和 ClientSecret。');
+    let message = modelVerificationErrors.get(responseStatus);
+    if (!message && (error?.name === 'TimeoutError'
+      || ['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(error?.cause?.code))) {
+      message = '模型验证等待超时，请稍后重试或选择响应更快的模型。';
+    }
+    if (!message && error?.name === 'AbortError') message = '模型验证已中断，请稍后重试。';
+    if (!message && responseStatus === undefined) message = '无法连接模型服务，请检查云端网络、接口地址和 HTTPS 证书。';
+    if (!message && responseStatus >= 300 && responseStatus < 400) message = '模型接口发生跳转，请使用服务商最终的 HTTPS 接口地址。';
+    if (!message && responseStatus >= 500) message = '模型服务暂时不可用，请稍后重试。';
+    fail(502, message ?? '模型服务未返回可用的文字回复，请检查模型 ID 和聊天接口兼容性。');
   }
 }
 

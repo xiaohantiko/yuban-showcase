@@ -34,6 +34,39 @@ function apiHeaders(key) {
   };
 }
 
+async function readAudioBytes(response, limit) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('语音文件大小超出范围');
+  try {
+    const declaredLength = Number(response.headers.get('Content-Length'));
+    if (declaredLength > limit) throw new Error('语音文件大小超出范围');
+    const initialCapacity = Number.isSafeInteger(declaredLength) && declaredLength > 0
+      ? declaredLength : Math.min(64 * 1024, limit);
+    let bytes = new Uint8Array(initialCapacity);
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const nextLength = length + value.byteLength;
+      if (nextLength > limit) throw new Error('语音文件大小超出范围');
+      if (nextLength > bytes.length) {
+        const expanded = new Uint8Array(Math.min(limit, Math.max(bytes.length * 2, nextLength)));
+        expanded.set(bytes.subarray(0, length));
+        bytes = expanded;
+      }
+      bytes.set(value, length);
+      length = nextLength;
+    }
+    if (!length) throw new Error('语音文件大小超出范围');
+    return bytes.subarray(0, length);
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function isHttpLink(value) {
   try {
     return ['https:', 'http:'].includes(new URL(value).protocol);
@@ -95,9 +128,14 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
   const chatEndpoint = endpoint(env.AI_BASE_URL, 'chat/completions');
   const modelConfigured = Boolean(chatEndpoint && model);
   const voiceModel = env.VOICE_MODEL?.trim();
-  const voiceName = env.VOICE_NAME?.trim();
   const voiceEndpoint = endpoint(env.VOICE_BASE_URL, 'audio/speech');
-  const voiceConfigured = Boolean(voiceEndpoint && voiceModel && voiceName);
+  const deepSeekVoice = voiceEndpoint?.origin === 'https://api.deepseek.com'
+    && ['/audio/speech', '/v1/audio/speech'].includes(voiceEndpoint.pathname);
+  if (deepSeekVoice) voiceEndpoint.pathname = '/v1/tools/tts';
+  const voiceName = env.VOICE_NAME?.trim() || (deepSeekVoice ? 'stella' : undefined);
+  const voiceConfigured = Boolean(voiceEndpoint && (deepSeekVoice
+    ? env.VOICE_API_KEY?.trim() && ['stella', 'tide'].includes(voiceName)
+    : voiceModel && voiceName));
   const braveKey = env.BRAVE_SEARCH_API_KEY?.trim();
 
   async function complete(system, messages, timeoutMs = 20_000) {
@@ -276,17 +314,23 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
         headers: apiHeaders(env.VOICE_API_KEY),
         redirect: 'manual',
         signal: AbortSignal.timeout(16000),
-        body: JSON.stringify({ model: voiceModel, input, voice: voiceName, response_format: 'mp3' }),
+        body: JSON.stringify(deepSeekVoice
+          ? { text: input, voice_id: voiceName, format: 'wav', filter_markdown: true }
+          : { model: voiceModel, input, voice: voiceName, response_format: 'mp3' }),
       });
-      if (!response.ok) throw new Error(`语音生成失败（HTTP ${response.status}）`);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`语音生成失败（HTTP ${response.status}）`);
+      }
       const type = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() || 'application/octet-stream';
       const format = audioFormats[type];
-      if (!format) throw new Error('语音服务没有返回支持的音频格式');
+      if (!format || (deepSeekVoice && format[1] !== 'wav')) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error('语音服务没有返回支持的音频格式');
+      }
       const [contentType, extension] = format;
-      const limit = 10 * 1024 * 1024;
-      if (Number(response.headers.get('Content-Length')) > limit) throw new Error('语音文件大小超出范围');
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (!bytes.length || bytes.length > limit) throw new Error('语音文件大小超出范围');
+      const limit = deepSeekVoice ? 4_999_999 : 10 * 1024 * 1024;
+      const bytes = await readAudioBytes(response, limit);
       return { bytes, contentType, filename: `yuban-voice.${extension}` };
     },
 
