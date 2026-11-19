@@ -63,7 +63,7 @@ enum ConsoleProbeError: LocalizedError {
 enum ConsoleProbe {
     private struct Status: Decodable { let multi: Bool }
 
-    static func verify(_ destination: ConsoleDestination) async throws {
+    static func verify(_ destination: ConsoleDestination, transport: ConsoleTransport) async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -72,6 +72,7 @@ enum ConsoleProbe {
         configuration.urlCredentialStorage = nil
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 15
+        transport.configureSession(configuration)
         let session = URLSession(configuration: configuration, delegate: ProbeDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
 
@@ -117,6 +118,7 @@ enum ConsoleProbe {
 struct ConsoleWebView: NSViewRepresentable {
     private static let loginHandler = "yubanLoginCredential"
     let destination: ConsoleDestination
+    let transport: ConsoleTransport
     let reportFailure: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(destination, reportFailure: reportFailure) }
@@ -124,6 +126,7 @@ struct ConsoleWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        transport.configureWebStore(configuration.websiteDataStore)
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.userContentController.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: Self.loginHandler)
         let webView = WKWebView(frame: .zero, configuration: configuration)

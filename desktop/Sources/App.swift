@@ -20,7 +20,7 @@ private struct ConsoleWindow: View {
     private enum ConnectionState {
         case needsAddress
         case checking
-        case connected(ConsoleDestination)
+        case connected(ConsoleDestination, ConsoleTransport)
         case failed(String)
     }
 
@@ -47,9 +47,9 @@ private struct ConsoleWindow: View {
                     ProgressView()
                     Text("正在检查云端账号服务…").foregroundStyle(.secondary)
                 }
-            case .connected(let destination):
-                ConsoleWebView(destination: destination) { message in
-                    if case .connected(let current) = connection, current == destination {
+            case .connected(let destination, let transport):
+                ConsoleWebView(destination: destination, transport: transport) { message in
+                    if case .connected(let current, _) = connection, current == destination {
                         connection = .failed(message)
                     }
                 }
@@ -95,12 +95,15 @@ private struct ConsoleWindow: View {
         }
         connection = .checking
         do {
-            try await ConsoleProbe.verify(destination)
-            if !Task.isCancelled, connectionAttempt == attempt { connection = .connected(destination) }
+            let transport = try await ConsoleTransport.prepare(for: destination)
+            try await ConsoleProbe.verify(destination, transport: transport)
+            if !Task.isCancelled, connectionAttempt == attempt { connection = .connected(destination, transport) }
         } catch {
             guard !Task.isCancelled, connectionAttempt == attempt else { return }
-            let message = (error as? ConsoleProbeError)?.localizedDescription
-                ?? "请检查云端地址、网络和 HTTPS 证书，然后重试。"
+            let hint = ConsoleDirectSettings.originIPv4(for: destination) == nil
+                ? "请检查云端地址、网络和 HTTPS 证书，然后重试。"
+                : "此 Mac 无法直连管理台。请检查 Wi-Fi 或有线网络，以及「云端连接」里保存的服务器 IPv4 地址。"
+            let message = (error as? ConsoleProbeError)?.localizedDescription ?? hint
             connection = .failed(message)
         }
     }
@@ -130,8 +133,23 @@ private struct ConnectionSheet: View {
     let savedDestination: ConsoleDestination?
     let connect: (ConsoleDestination) -> Void
     @ViewState private var copyMessage: String?
+    @ViewState private var directAddress = ""
+    @ViewState private var showDirectSettings = false
 
     private var destination: ConsoleDestination? { ConsoleDestination(address) }
+    private var ipv4: String { directAddress.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var canSave: Bool {
+        guard destination != nil else { return false }
+        if #available(macOS 14, *), !ipv4.isEmpty { return ExactRelay.isUsableOriginIPv4(ipv4) }
+        return true
+    }
+
+    private func save() {
+        guard let destination, canSave else { return }
+        ConsoleDirectSettings.save(ipv4, for: destination)
+        connect(destination)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -143,10 +161,25 @@ private struct ConnectionSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($addressFocused)
                     .accessibilityLabel("云端管理台 HTTPS 地址")
-                    .onSubmit { if let destination { connect(destination) } }
+                    .onSubmit { save() }
                 Text("填写宇伴管理台的 HTTPS 根地址。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if #available(macOS 14, *), let destination, destination.origin.port == nil {
+                DisclosureGroup("此 Mac 的直连设置", isExpanded: $showDirectSettings) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("服务器 IPv4 地址", text: $directAddress)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { save() }
+                        Text("留空使用系统网络。填写后，只有此 App 访问当前管理台时会通过 Wi-Fi 或有线网络直连。服务器更换 IP 后请在这里更新。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !canSave { Text("请输入有效的服务器 IPv4 地址。").font(.caption).foregroundStyle(.red) }
+                    }
+                    .padding(.top, 6)
+                }
             }
 
             if let savedDestination, destination == savedDestination {
@@ -162,15 +195,21 @@ private struct ConnectionSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("保存并连接") { if let destination { connect(destination) } }
+                Button("保存并连接") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(destination == nil)
+                    .disabled(!canSave)
             }
             .padding(.top, 4)
         }
         .padding(26)
         .frame(width: 492)
-        .onAppear { addressFocused = true }
+        .onAppear {
+            directAddress = destination.flatMap { ConsoleDirectSettings.originIPv4(for: $0) } ?? ""
+            addressFocused = true
+        }
+        .onChange(of: destination) { newValue in
+            directAddress = newValue.flatMap { ConsoleDirectSettings.originIPv4(for: $0) } ?? ""
+        }
     }
 
     private func copyLegacyPassword(for origin: URL) {

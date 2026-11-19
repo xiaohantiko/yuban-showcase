@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Yuban.Windows</RootNamespace>
     <AssemblyName>Yuban</AssemblyName>
-    <Version>0.1.15</Version>
+    <Version>0.1.16</Version>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>none</DebugType>
