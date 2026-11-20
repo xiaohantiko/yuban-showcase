@@ -6,7 +6,7 @@
 
 ## 下载安装
 
-- **macOS 13 或更新版本，Apple 芯片和 Intel**。打开 `Yuban-macOS-universal.dmg`，将「宇伴」拖进「应用程序」，再从「应用程序」打开。下载包的签名和公证状态见 Releases 中对应版本的说明。
+- **macOS 13 或更新版本，Apple 芯片和 Intel**。打开 `Yuban-macOS-universal.dmg`，将「宇伴」拖进「应用程序」，再从「应用程序」打开。更新时先按 `⌘Q` 退出公开版，把新版拖到旧版所在的文件夹，选择「替换」。使用其他发行渠道的宇伴时，请从原渠道更新，以保留连接配置。下载包的签名和公证状态见 Releases 中对应版本的说明。
 - **Windows 11 x64**。完整解压 `Yuban-Windows-x64.zip`，再在解压后的目录运行 `Yuban.exe`。桌面界面需要 Microsoft Edge WebView2 Runtime。
 
 桌面端首次打开时，在「云端连接」填入自托管宇伴服务的 **HTTPS 根地址**，保存后注册或登录。地址应直接打开管理台，保留域名和必要的端口即可。若只有本机 HTTP 服务，请用浏览器访问。每个公开发行版附有 `SHA256SUMS.txt`。
@@ -60,5 +60,5 @@ npm start
 
 ## 从源码构建桌面端
 
-- macOS 安装 Xcode 命令行工具后，在仓库根目录运行 `bash desktop/build.sh --dmg`。应用和磁盘映像输出到 `dist/`。
+- macOS 安装 Xcode 命令行工具后，在仓库根目录运行 `bash desktop/build.sh --dmg`。ZIP 压缩包和磁盘映像输出到 `dist/`。
 - Windows 安装 .NET 10 SDK 后，运行 `dotnet publish windows/Yuban.Windows.csproj -c Release -r win-x64 --self-contained true`。将发布目录完整打包，运行时保留其中所有文件。

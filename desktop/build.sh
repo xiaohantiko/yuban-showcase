@@ -53,25 +53,22 @@ for arch in arm64 x86_64; do
     xcrun lipo "$contents/MacOS/$executable" -verify_arch "$arch"
 done
 
-destination="$dist/$name.app"
-if [[ -e "$destination" || -L "$destination" ]]; then
-    mv "$destination" "$stage/previous.app"
-fi
-if ! mv "$app" "$destination"; then
-    if [[ -e "$stage/previous.app" || -L "$stage/previous.app" ]]; then
-        mv "$stage/previous.app" "$destination"
-    fi
-    exit 1
-fi
-printf '\n%s\n' "$destination"
+archive="$stage/$name.zip"
+ditto -c -k --norsrc --keepParent "$app" "$archive"
+unzip -tq "$archive"
 
 if [[ ${1:-} == --dmg ]]; then
     disk="$stage/disk"
     mkdir "$disk"
-    ditto "$destination" "$disk/$name.app"
+    mv "$app" "$disk/$name.app"
     ln -s /Applications "$disk/Applications"
     hdiutil create -volname "$name" -srcfolder "$disk" -format UDZO "$stage/$name.dmg"
     hdiutil verify "$stage/$name.dmg"
+fi
+
+mv -f "$archive" "$dist/$name.zip"
+printf '%s\n' "$dist/$name.zip"
+if [[ ${1:-} == --dmg ]]; then
     mv -f "$stage/$name.dmg" "$dist/$name.dmg"
     printf '%s\n' "$dist/$name.dmg"
 fi
