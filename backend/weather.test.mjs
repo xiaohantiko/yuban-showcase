@@ -75,6 +75,23 @@ test('only local questions and outdoor plans use location; bare greetings and na
   assert.equal(seen.length, 2);
 });
 
+test('calling the companion by name retains local questions; travel to another place never uses the saved grid', async () => {
+  let calls = 0;
+  const weather = createWeather({ clock: () => start, fetchImpl: async () => { calls++; return Response.json(forecast()); } });
+  const settings = { ...saved, companionName: '小晴' };
+  for (const text of ['晚上我要去上海跑步', '等会儿我出门去广州', '我在大阪，准备出门', '我要去 Oslo 骑车',
+    '姐姐，北京多少度？', '上海，天气怎么样？', '小枫，我这边多少度？']) {
+    assert.equal(await weather(settings, owner, text, { providerAvailable: true }), null, text);
+    assert.equal(await weather(settings, owner, text, { providerAvailable: true, proactive: true }), null, text);
+  }
+  assert.equal(calls, 0);
+  for (const text of ['小晴，我这边多少度？', '姐姐，今天多少度？', '小晴呀：外面会下雨吗？', '今天天气咋样']) {
+    assert.equal((await weather(settings, owner, text, { providerAvailable: true })).requested, true, text);
+  }
+  assert.equal((await weather(settings, owner, '我准备去楼下跑步', { providerAvailable: true })).requested, false);
+  assert.equal(calls, 1);
+});
+
 test('provider throttling, old bulletins and bad units fail without guessing or making repeated requests', async () => {
   for (const response of [
     () => new Response(null, { status: 429, headers: { 'Retry-After': '3600' } }),

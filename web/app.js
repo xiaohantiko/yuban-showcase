@@ -807,7 +807,9 @@ const weatherDeviceKey = 'yuban.weather.deviceGrant';
 
 function weatherDeviceGrant(weather) {
   const account = accountUsername();
-  return account && weather?.binding ? JSON.stringify([account, weather.binding]) : '';
+  // A region shared or reauthorized on another device supersedes this device's opt-in.
+  return account && weather?.enabled && weather.binding && Number.isSafeInteger(weather.updatedAt)
+    ? JSON.stringify([account, weather.binding, weather.updatedAt]) : '';
 }
 function hasDeviceGrant(weather) {
   const grant = weatherDeviceGrant(weather);
@@ -865,11 +867,21 @@ function openCareConsent(kind) {
 }
 function locateWeatherRegion() {
   if (!window.isSecureContext || !navigator.geolocation) throw new Error('此设备暂不能定位。可在手机浏览器用 HTTPS 打开同一管理台，登录后授权。');
-  return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
-    ({coords}) => resolve({ latitude: Math.round(coords.latitude * 10) / 10, longitude: Math.round(coords.longitude * 10) / 10 }),
-    error => reject(new Error(error.code === 1 ? '未获得位置权限。你可以在系统设置中允许宇伴定位，或用手机浏览器登录同一账号授权。' : '暂时无法取得当前位置，请检查设备定位服务后重试。')),
-    { enableHighAccuracy: false, maximumAge: 300_000, timeout: 12_000 },
-  ));
+  // The browser's location timeout excludes time spent waiting for OS permission.
+  const maxWait = 20_000;
+  const deadline = Date.now() + maxWait;
+  let timer;
+  return new Promise((resolve, reject) => {
+    const timedOut = () => reject(new Error('等待定位超时。请在系统设置中检查定位权限后重试，也可以用手机浏览器登录同一账号授权。'));
+    timer = setTimeout(timedOut, maxWait);
+    navigator.geolocation.getCurrentPosition(({coords}) => {
+      if (Date.now() >= deadline) return timedOut();
+      resolve({ latitude: Math.round(coords.latitude * 10) / 10, longitude: Math.round(coords.longitude * 10) / 10 });
+    }, error => {
+      if (error.code === 3) return timedOut();
+      reject(new Error(error.code === 1 ? '未获得位置权限。你可以在系统设置中允许宇伴定位，或用手机浏览器登录同一账号授权。' : '暂时无法取得当前位置，请检查设备定位服务后重试。'));
+    }, { enableHighAccuracy: false, maximumAge: 300_000, timeout: 12_000 });
+  }).finally(() => clearTimeout(timer));
 }
 async function applyCareConsent(choice, allowAuto = false, automatic = false) {
   if (!choice || careBusy || redirectingToLogin) return;
@@ -880,6 +892,7 @@ async function applyCareConsent(choice, allowAuto = false, automatic = false) {
   try {
     let payload = { enabled: kind === key, binding: data.binding };
     if (kind === 'weather') {
+      if (!automatic) feedback('care-feedback', '正在等待设备定位，请留意系统的位置权限提示。');
       const region = await locateWeatherRegion();
       if (redirectingToLogin || accountUsername() !== account || state.services.weather?.binding !== data.binding || (automatic && document.hidden)) return;
       payload = { ...payload, ...region, consent: true, expectedUpdatedAt: data.updatedAt };

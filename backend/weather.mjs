@@ -56,15 +56,27 @@ export function visibleSettings(settings) {
 }
 
 const localPrefix = /^(?:(?:请问|请|能不能|能|你知道|你|帮我|麻烦|给我|看一下|看下|看看|查一下|查查|查下|查|告诉我|播报|说说|一下|问一下|现在|今天|今日|此刻|当前|这会儿|我所在(?:的)?地区|我这边|我这儿|我这里|我那边|这边|这儿|这里|当地|本地|附近|外边|外面|室外|出门|的|[\s，,：:])*)/u;
-const localQuestion = /^(?:(?:天气(?:预报)?|气温|温度)(?:怎么样|如何|怎样|是什么样(?:的|子)?|什么样(?:的|子)?(?:吗)?|好不好|还好吗|多少摄氏度|是多少(?:度)?|多少(?:度)?|有多高|高吗|低吗|几度|冷吗|热吗|呢)?|多少度|几度|冷不冷|热不热|冷吗|热吗|下雨(?:了没|没有|了吗|吗|没)|会(?:不会)?下雨(?:吗)?|要(?:不要)?带伞(?:吗)?|用(?:不用)?带伞(?:吗)?|要带外套吗|要穿什么|穿什么|是晴天吗|在下雨吗|有雨吗|有多冷|有多热)(?:呀|啊|呢|嘛|啦|吧)?[\s。？！!?～~]*$/u;
-export function weatherInterest(text) {
-  const input = String(text ?? '').trim();
+const localQuestion = /^(?:(?:天气(?:预报)?|气温|温度)(?:怎么样|咋样|如何|怎样|是什么样(?:的|子)?|什么样(?:的|子)?(?:吗)?|好不好|还好吗|多少摄氏度|是多少(?:度)?|多少(?:度)?|有多高|高吗|低吗|几度|冷吗|热吗|呢)?|多少度|几度|冷不冷|热不热|冷吗|热吗|下雨(?:了没|没有|了吗|吗|没)|会(?:不会)?下雨(?:吗)?|要(?:不要)?带伞(?:吗)?|用(?:不用)?带伞(?:吗)?|要带外套吗|要穿什么|穿什么|是晴天吗|在下雨吗|有雨吗|有多冷|有多热)(?:呀|啊|呢|嘛|啦|吧)?[\s。？！!?～~]*$/u;
+const outdoorActivity = /出门|遛狗|跑步|散步|骑车|晾衣服|爬山|通勤/u;
+const outingWords = /等会儿?|待会儿?|一会儿?|刚刚?|准备|打算|计划|现在|马上|今天|晚上|早上|下午|下班|一起|出去|下楼|家门口|门口|楼下|附近|小区|公园|这边|这里|一圈|一趟|一下|我们|[我要想去到在就正先再来啦呀了呢吧里]|[\s，,。！!～~]/gu;
+
+export function weatherInterest(text, companionName = '') {
+  let input = String(text ?? '').trim();
+  const address = /^([^，,、：:\s]+)[，,、：:\s]+/u.exec(input);
+  if (address) {
+    const calling = address[1].replace(/[呀啊]$/u, '');
+    if (calling === companionName || /^(?:姐姐?|哥哥?)$/u.test(calling)) input = input.slice(address[0].length);
+  }
   if (/明天|明日|后天|昨天|昨晚|上周|下周|周末|未来|预警|台风路径|对比/u.test(input)) return null;
   const clauses = input.split(/[，,。；;？！!?]/u).map(clause => clause.trim()).filter(Boolean);
   const asksLocal = clause => localQuestion.test(clause.replace(localPrefix, ''));
   if (asksLocal(input) || (clauses.length > 1 && clauses.every(asksLocal))) return 'question';
   // Someone reporting the weather or talking about clothes is not necessarily requesting a lookup.
-  if (/(?:我|准备|打算|等会|待会|马上|一会|刚|想去|要去).{0,8}(?:出门|遛狗|跑步|去散步|骑车|晾衣服|爬山|通勤)/u.test(input)) return 'outing';
+  // Accept a local activity only when the rest describes timing, intent or a nearby place.
+  // An unspecified destination, including text after the activity, must not use the owner's grid.
+  const parts = input.split(outdoorActivity);
+  if (parts.length > 1 && /我|准备|打算|计划|等会|待会|马上|一会|刚|想|要/u.test(input)
+    && parts.every(part => part.replace(outingWords, '') === '')) return 'outing';
   return null;
 }
 
@@ -143,8 +155,8 @@ export function createWeather({ fetchImpl = (...args) => fetch(...args), clock =
     finally { if (pending.get(key) === work) pending.delete(key); }
   }
   return async function context(settings, owner, text, { proactive = false, providerAvailable = false } = {}) {
-    const interest = weatherInterest(text);
-    if (!interest && !proactive) return null;
+    const interest = weatherInterest(text, settings?.companionName);
+    if (!interest && (!proactive || outdoorActivity.test(text) || /天气|气温|几度|多少度|带伞/u.test(text))) return null;
     const grant = weatherGrantFor(settings, owner);
     const status = !providerAvailable ? 'unavailable' : !grant ? 'off' : grant.updatedAt + DAY <= clock() ? 'expired' : null;
     if (status) return interest === 'question' && !proactive ? { status, requested: true } : null;

@@ -286,7 +286,10 @@
       <p class="setup-feedback" id="care-feedback" role="status"></p>
       <dialog class="dialog" id="care-consent" aria-labelledby="care-title">
         <h2 id="care-title"></h2><p id="care-detail"></p>
-        <label id="weather-auto-label" hidden><input id="weather-auto" type="checkbox"> 下次打开此设备的管理台时，允许更新地区</label>
+        <div id="weather-auto-label" hidden>
+          <label><input id="weather-auto" type="checkbox" aria-describedby="weather-auto-help"> 管理台在前台时，允许更新这台设备的地区</label>
+          <p class="plugin-note" id="weather-auto-help">在其他设备重新分享地区后，以新设备为准。Mac 和 Windows 桌面版完全退出后，下次想自动更新需重新勾选。使用浏览器时，这个选择会随网站数据保存在本机。</p>
+        </div>
         <div class="plugin-buttons"><button class="button subtle" id="care-cancel">取消</button><button class="button primary" id="care-confirm">确认授权</button></div>
       </dialog>
     </section>

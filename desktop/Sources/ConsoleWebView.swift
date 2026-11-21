@@ -44,6 +44,21 @@ struct ConsoleDestination: Equatable {
         guard let url, contains(url), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         return parts.percentEncodedPath == "/login" && parts.percentEncodedQuery == nil && parts.percentEncodedFragment == nil
     }
+
+    func matchesSecurityOrigin(scheme: String, host: String, port: Int) -> Bool {
+        let brackets = CharacterSet(charactersIn: "[]")
+        return scheme == "https"
+            && host.lowercased().trimmingCharacters(in: brackets) == origin.host?.lowercased().trimmingCharacters(in: brackets)
+            && (port == 0 ? 443 : port) == (origin.port ?? 443)
+    }
+
+    func allowsWeatherPrompt(page: URL?, frame: URL?, isMainFrame: Bool, scheme: String, host: String, port: Int) -> Bool {
+        func isConsolePage(_ url: URL?) -> Bool {
+            guard let url, contains(url), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+            return ["/", "/admin"].contains(parts.percentEncodedPath) && parts.percentEncodedQuery == nil
+        }
+        return isMainFrame && isConsolePage(page) && isConsolePage(frame) && matchesSecurityOrigin(scheme: scheme, host: host, port: port)
+    }
 }
 
 enum ConsoleProbeError: LocalizedError {
@@ -168,10 +183,19 @@ struct ConsoleWebView: NSViewRepresentable {
                   destination.isLoginDocument(webView.url), destination.isLoginDocument(message.frameInfo.request.url)
             else { return false }
             let origin = message.frameInfo.securityOrigin
-            let brackets = CharacterSet(charactersIn: "[]")
-            return origin.protocol == "https"
-                && origin.host.lowercased().trimmingCharacters(in: brackets) == destination.origin.host?.lowercased().trimmingCharacters(in: brackets)
-                && (origin.port == 0 ? 443 : origin.port) == (destination.origin.port ?? 443)
+            return destination.matchesSecurityOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+        }
+
+        // Spell out the public macOS 27 selector so builds using earlier SDKs can also run on 27.
+        @available(macOS 27.0, *)
+        @objc(webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
+        func webView(_ webView: WKWebView, requestGeolocationPermissionFor origin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo, decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
+            guard active, webView === self.webView, frame.webView === webView,
+                  destination.allowsWeatherPrompt(page: webView.url, frame: frame.request.url, isMainFrame: frame.isMainFrame,
+                                                  scheme: origin.protocol, host: origin.host, port: origin.port)
+            else { return decisionHandler(.deny) }
+            decisionHandler(.prompt)
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,

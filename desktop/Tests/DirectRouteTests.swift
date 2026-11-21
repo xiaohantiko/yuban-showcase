@@ -3,13 +3,38 @@ import Foundation
 @main
 struct DirectRouteTests {
     static func main() {
+        checkWeatherPermission()
         guard #available(macOS 14, *) else {
             print("Direct routing requires macOS 14 or later.")
             return
         }
         checkSettings()
         checkAdmission()
-        print("Passed exact-origin settings and CONNECT admission checks.")
+        print("Passed console location permission, exact-origin settings and CONNECT admission checks.")
+    }
+
+    static func checkWeatherPermission() {
+        let target = ConsoleDestination("https://example.com")!
+        let console = "https://example.com/admin#companionship"
+        func allows(page: String = console, frame: String = console, main: Bool = true,
+                    scheme: String = "https", host: String = "example.com", port: Int = 0) -> Bool {
+            target.allowsWeatherPrompt(page: URL(string: page), frame: URL(string: frame), isMainFrame: main,
+                                       scheme: scheme, host: host, port: port)
+        }
+        precondition(allows())
+        precondition(allows(page: "https://example.com/#companionship", frame: "https://example.com/", port: 443))
+        precondition(!allows(main: false))
+        precondition(!allows(scheme: "http") && !allows(host: "yuban.example.com") && !allows(port: 8443))
+        var userURL = URLComponents(url: target.origin, resolvingAgainstBaseURL: false)!
+        userURL.user = "example"
+        for forbidden in ["http://example.com/", "https://yuban.example.com/", "https://example.com:8443/",
+                          userURL.url!.absoluteString, "https://example.com/login", "https://example.com/admin?q=1", "about:blank"] {
+            precondition(!allows(page: forbidden) && !allows(frame: forbidden))
+        }
+        if #available(macOS 27.0, *) {
+            let selector = NSSelectorFromString("webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:")
+            precondition(ConsoleWebView.Coordinator.instancesRespond(to: selector))
+        }
     }
 
     @available(macOS 14, *)

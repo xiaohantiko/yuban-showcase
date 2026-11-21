@@ -65,6 +65,12 @@ private struct ConsoleWindow: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: connectionAttempt) { await openCloud(attempt: connectionAttempt) }
         .toolbar {
+            if #unavailable(macOS 27.0), case .connected(let destination, _) = connection {
+                ToolbarItem(placement: .primaryAction) {
+                    Link("在浏览器授权天气", destination: destination.origin)
+                        .help("在浏览器登录同一宇伴账号，打开「陪伴插件 → 当地天气」分享此设备的大致地区。")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showsConnection = true
