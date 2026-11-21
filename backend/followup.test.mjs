@@ -55,6 +55,18 @@ test('busy, goodbyes, short replies, administrative actions, pending stories and
   assert.equal(planFollowup(exchange('我觉得这首歌很好听。', 50), settings, anchor), null);
 });
 
+test('an explicit pause overrides an unfinished story even when the assistant asks for more', () => {
+  for (const user of [
+    '我还没讲完，今天先讲到这里。', '我还没讲完，等我忙完再说。',
+    '我还没讲完，我去开个会，晚点回你。', '我还没讲完，这个猜谜我们到此为止吧。',
+  ]) {
+    const thread = exchange(user);
+    thread.messages = thread.messages.slice(-4);
+    thread.messages.at(-1).text = '是呀，那后来呢？';
+    assert.equal(planFollowup(thread, settings, anchor), null, user);
+  }
+});
+
 test('only a confirmed first delivery for a genuinely unfinished exchange can lead to one more message', () => {
   const thread = exchange();
   const first = planFollowup(thread, settings, anchor);
@@ -83,6 +95,8 @@ test('an errand keeps only an actual unfinished turn; a third person or a new da
     messages: [...thread.messages, { role: 'user', text: user, at }, { role: 'assistant', text: reply, at }] });
   const water = add(conversation, '我去接杯水。', '好呀，慢慢来。', after);
   assert.equal(planFollowup(water, settings, after).reason, 'open');
+  const shortBreak = add(conversation, '等一下我去倒杯水', '好呀，慢慢来。', after);
+  assert.equal(planFollowup(shortBreak, settings, after).reason, 'open');
   const closed = add(exchange('这个笑话就说到这里。'), '我去接杯水。', '好呀，慢慢来。', after);
   assert.equal(planFollowup(closed, settings, after), null);
   for (const ending of ['我还没讲完，不过我接个电话。', '我在想另一个事，刚才的就不说了。', '旁边的人还没讲完呢。']) {

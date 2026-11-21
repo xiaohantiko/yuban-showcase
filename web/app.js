@@ -1392,7 +1392,9 @@ function renderLogs(logs) {
     const via = { qq: 'QQ 官方', onebot: 'OneBot', demo: '中转服务' }[log.transport] || '中转服务';
     const kind = { reply: '回复', greeting: '主动问候', check: '测试', plugin: '插件' }[log.kind] || '回调';
     title.textContent = `${via} · ${kind}`;
-    detail.textContent = log.detail;
+    const wakeupQuotaReached = log.transport === 'qq' && log.kind === 'greeting' && log.status === 'error'
+      && typeof log.detail === 'string' && /^(?:平台返回 )?40034122$/.test(log.detail);
+    detail.textContent = wakeupQuotaReached ? 'QQ 本时段的主动问候额度已用完，普通聊天仍可用（40034122）。' : log.detail;
     label.textContent = log.status === 'ok' ? '成功' : '失败';
     label.className = `badge ${log.status === 'ok' ? 'success' : 'error'}`;
     item.append(title, detail);

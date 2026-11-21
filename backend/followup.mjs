@@ -5,8 +5,13 @@ const hour = 60 * minute;
 const acknowledgement = /^(?:嗯+|哦+|好(?:的|啊|呀|吧|嘞)?|收到|(?:我)?(?:知道|明白|懂)(?:啦|了)|原来(?:是)?这样[啊呀]?|这我知道|行吧|没事|没什么|谢谢(?:你)?|哈哈+|ok(?:ay)?|thanks|bye)[\p{P}\p{S}\s]*$/iu;
 const command = /^(?:[/#]|(?:绑定|认领|解绑)(?:主人|账号|码)?(?:\s|[:：])|(?:查看|开启|关闭|清空|删除|导入)(?:记忆|问候|相处记忆|主动找我)|(?:帮我查|查资料|搜索|语音回复))/u;
 const userPause = /别(?:再)?(?:催|问|找我|来找我|打扰|联系)|不要(?:再)?(?:催|问|打扰|来找我|联系)|不(?:用|想)(?:再)?(?:聊|联系|来找我|打扰)|等我(?:主动)?(?:来)?(?:找你|回你|回复|联系你)|过(?:几|两|两三|一两)天(?:再)?(?:讲|聊|说)|别等我|不用回|不方便(?:聊|回)|我先走|我在忙|正忙|在(?:开会|开车|上课|考试)|想(?:一个人|静静|独处)|(?:先|就|暂时)不(?:聊|说|讲)|暂时没空|我(?:先)?接(?:个|一下)?电话|下次再|不聊啦|回头(?:再)?聊|改天(?:再)?聊|之后再聊|晚点(?:再)?(?:聊|说)|明天(?:再)?(?:聊|说)|说完了|讲完了|就(?:说到这|到这|这样)|(?:我(?:要|先|去)|准备|先去|该|要去|得去|现在在|正在)(?:先)?(?:去)?(?:睡|休息|开会|上课|工作|忙|考试|开车)|(?:要|先|太|有点)忙|忙着|睡了|晚安|拜拜|再见|good\s?night|talk later|don.t (?:text|message)|gotta go/iu;
+const explicitEnding = /(?:先|今天|今晚|就)(?:讲|说|聊)到这(?:里|儿)?(?:吧|啦|了|哈)?(?=$|[，,。.!！?？；;\s])|到此为止(?:吧|啦|了)?(?=$|[，,。.!！?？；;\s])/u;
+const defersReply = /等我(?:忙完|开完会|下课|有空)(?:了)?(?:再|以后)|(?:晚点|晚些|回头|改天)(?:我)?(?:再)?(?:回你|回复你|找你)|(?:我|先|要|得)(?:先)?(?:去)?开(?:一?个|一下)会/u;
+function pausesConversation(text) {
+  return userPause.test(text) || explicitEnding.test(text) || defersReply.test(text);
+}
 const assistantClose = /晚安|好好休息|先去忙|那你(?:先)?(?:忙|休息)|下次(?:再)?聊|明天(?:再)?聊|改天(?:再)?聊|不打扰/u;
-const briefErrand = /^(?:我(?:先|要)?|先)?(?:去|去趟)?(?:(?:接|拿|倒|喝)(?:一?[杯口]|点)?水|(?:拿|找)(?:一下|个)?耳机)(?:去了?|哈|呀|啦)?[。！!\s]*$/u;
+const briefErrand = /^(?:(?:等一下|等我一下)[，,\s]*)?(?:我(?:先|要)?|先)?(?:去|去趟)?(?:(?:接|拿|倒|喝)(?:一?[杯口]|点)?水|(?:拿|找)(?:一下|个)?耳机)(?:去了?|哈|呀|啦)?[。！!\s]*$/u;
 const unfinished = /^(?:(?:其实|不过|对了|而且|我(?:们)?(?:这个故事|刚才那段|的故事)?|刚才那个故事))*?(?:还没(?:有)?(?:讲|说)完|(?:才|只)(?:讲|说)到一半|还有(?:个?后续|[后下]半段|(?:一点|一件事|件事|一段|个细节)(?:想|要|没)(?:跟你)?(?:说|讲))|(?:接着|继续|还要|再)(?:跟你|给你)?(?:讲|说|聊)|(?:等我|一会儿?)?回来(?:再)?(?:接着|继续)(?:讲|说|聊)|你猜猜?(?:看)?(?:后来|后面|发生了什么|结果))/u;
 function hasMore(text) {
   const clauses = text.split(/[，,。！？!?；;：:\n]/u).map(part => part.trim()).filter(Boolean);
@@ -33,7 +38,7 @@ function recentPairs(messages, anchor, now, timeZone, localDate) {
       pairs.length = 0; pending = undefined; continue;
     }
     if (m.role === 'user') {
-      if (pairs.length && (m.at - pairs.at(-1).userAt > 40 * minute || userPause.test(pairs.at(-1).user) || assistantClose.test(pairs.at(-1).reply))) pairs.length = 0;
+      if (pairs.length && (m.at - pairs.at(-1).userAt > 40 * minute || pausesConversation(pairs.at(-1).user) || assistantClose.test(pairs.at(-1).reply))) pairs.length = 0;
       pending = { user: text, userAt: m.at };
     } else if (pending) {
       pairs.push({ ...pending, reply: text, replyAt: m.at });
@@ -69,7 +74,7 @@ export function planFollowup(thread, settings, now = Date.now()) {
 
   const pairs = recentPairs(thread.messages, anchor, now, settings?.timeZone, start.localDate), last = pairs.at(-1);
   if (!last || last.userAt < anchor - 5 || last.userAt > anchor + 3 * minute
-    || userPause.test(last.user) || assistantClose.test(last.reply)) return null;
+    || pausesConversation(last.user) || assistantClose.test(last.reply)) return null;
   const brief = briefErrand.test(last.user);
   const real = pairs.filter(pair => substantial(pair.user) && substantial(pair.reply) && !briefErrand.test(pair.user));
   if (real.length < 2 || (!brief && real.at(-1) !== last)) return null;
