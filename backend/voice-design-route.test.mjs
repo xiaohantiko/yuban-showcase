@@ -6,7 +6,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './server.mjs';
-import { previewReservation, voiceDesignResponse, voiceDesignRoute } from './voice-design-route.mjs';
+import { previewReservation, voiceDesignResponse, voiceDesignRoute, voiceSelectionRoute } from './voice-design-route.mjs';
 
 test('preview reservations space calls and cap a rolling day across midnight', () => {
   const first = Date.UTC(2025, 0, 1, 23, 59);
@@ -61,7 +61,20 @@ test('only signed-in console accounts can audition; quotas, audio and keys stay 
   let server, base, origin, calls = 0, now = Date.now();
   const generating = Promise.withResolvers();
   const disconnected = Promise.withResolvers();
+  const slowQuery = Promise.withResolvers();
+  const finishQuery = Promise.withResolvers();
   const fetchImpl = async (url, init) => {
+    const action = JSON.parse(init.body).input;
+    if (action.action === 'query_voice') {
+      assert.equal(new URL(url).hostname, 'workspace-test.cn-beijing.maas.aliyuncs.com');
+      const auth = new Headers(init.headers).get('authorization');
+      if (auth !== 'Bearer ' + input.apiKey) return Response.json({ message: input.apiKey }, { status: 403 });
+      if (action.voice_id === voiceId + '-pending') {
+        slowQuery.resolve();
+        await finishQuery.promise;
+      }
+      return Response.json({ output: { voice_id: action.voice_id, target_model: model, status: 'OK' } });
+    }
     calls++;
     assert.equal(url.hostname, 'dashscope.aliyuncs.com');
     assert.equal(new Headers(init.headers).get('authorization'), 'Bearer ' + input.apiKey);
@@ -144,6 +157,34 @@ test('only signed-in console accounts can audition; quotas, audio and keys stay 
     const saved = await readFile(join(name.parentPath ?? name.path, name.name), 'utf8');
     for (const value of [input.apiKey, input.previewText, input.description, voiceId, wave]) assert.ok(!saved.includes(value));
   }
+  const selection = { enabled: true, voiceId, apiKey: input.apiKey, workspaceId: 'workspace-test' };
+  const select = (cookie, data = selection, headers) => request(voiceSelectionRoute, { cookie, data, headers });
+  assert.equal((await select(null)).status, 401);
+  assert.equal((await select(a, selection, { Origin: '' })).status, 403);
+  assert.equal((await select(a, selection, { 'X-Yuban-Account': 'green-fixture' })).status, 401);
+  assert.equal((await select(a, { ...selection, workspaceId: 'space.example' })).status, 400);
+  const unavailable = await select(a, { ...selection, apiKey: randomUUID() });
+  assert.equal(unavailable.status, 502);
+  assert.ok(!(await unavailable.text()).includes(input.apiKey));
+  const selected = await select(a);
+  assert.equal(selected.status, 200);
+  assert.deepEqual(await selected.json(), { enabled: true, voiceId, needsRecovery: false });
+  assert.deepEqual((await state(a)).settings, initial.settings);
+  assert.equal((await state(b)).services.voiceSelection.enabled, false);
+  await close();
+  await boot();
+  assert.deepEqual((await state(a)).services.voiceSelection, { enabled: true, voiceId, needsRecovery: false });
+  for (const name of await readdir(folder, { recursive: true, withFileTypes: true })) {
+    if (!name.isFile()) continue;
+    const saved = await readFile(join(name.parentPath ?? name.path, name.name), 'utf8');
+    for (const value of [input.apiKey, voiceId]) assert.ok(!saved.includes(value));
+  }
+  const slower = select(a, { ...selection, voiceId: voiceId + '-pending' });
+  await slowQuery.promise;
+  assert.equal((await select(a, { enabled: false })).status, 200);
+  finishQuery.resolve();
+  assert.equal((await slower).status, 409);
+  assert.equal((await state(a)).services.voiceSelection.enabled, false);
   await close();
   env.YUBAN_CONSOLE_ACCOUNTS = '';
   await boot();

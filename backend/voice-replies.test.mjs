@@ -37,7 +37,7 @@ test('voice settings migrate the existing switch and require explicit account co
 });
 
 test('explicit format requests take precedence in every mode and a question about audio stays text', async () => {
-  for (const mode of ['text', 'occasionally', 'voice']) {
+  for (const mode of ['text', 'occasionally', 'mixed', 'voice']) {
     const config = mergeSettings(settings, { voiceReplyMode: mode });
     for (const input of ['能用文字说吗？', '先别发语音，我不方便听。', '不要用语音回复']) {
       assert.equal((await turn(input, { settings: config, context: { voice: true } })).voice, undefined, input);
@@ -101,4 +101,62 @@ test('occasional speech requires a usable authorized provider and respects deliv
   earlier[5].voiceDelivered = false;
   earlier.at(-5).voiceDelivered = true; earlier.at(-5).at = at - 120 * minute;
   assert.equal((await turn(text, { messages: earlier })).voice, undefined, 'four intervening ordinary replies also required');
+});
+
+test('mixed mode alternates confirmed ordinary turns, including short replies and inbound chats at night', async () => {
+  const mixed = mergeSettings(settings, { voiceReplyMode: 'mixed', useDeepseekVoice: true });
+  assert.equal(readSettings(mixed).voiceReplyMode, 'mixed');
+  assert.equal(mixed.voiceReplies, false);
+  const providers = { deepseekVoiceAvailable: false, bailianVoiceSelected: true, bailianVoiceAvailable: true };
+  const previous = [], context = { at: Date.parse('2026-11-20T23:40:00+08:00') };
+  for (let i = 0; i < 6; i++) {
+    const reply = await turn('嗯嗯', { settings: mixed, providers, messages: previous, context });
+    assert.equal(Boolean(reply.voice), i % 2 === 0);
+    previous.push({ ...reply, voiceDelivered: Boolean(reply.voice) });
+    previous.push({ ...reply, kind: 'greeting' }, { ...reply, kind: 'search' }, { ...reply, pendingDelivery: true });
+  }
+  assert.equal((await turn('现在不方便听，打字就好', { settings: mixed, providers, messages: [] })).voice, undefined);
+  const failedMedia = [{ role: 'assistant', text: '好呀', voice: true, voiceDelivered: false }];
+  assert.equal((await turn('你好', { settings: mixed, providers, messages: failedMedia })).voice, true);
+  for (const input of ['帮我查一下北京的人口', '你那里今天几度？', '验证码发你了']) {
+    assert.equal((await turn(input, { settings: mixed, providers, messages: [] })).voice, undefined);
+  }
+  assert.equal((await turn('怎么啦', { settings: mixed, messages: [],
+    providers: { ...providers, deepseekVoiceAvailable: true, bailianVoiceAvailable: false } })).voice, undefined);
+});
+
+test('a QQ voice request grounds model capabilities and retains the actual question even after a false refusal', async () => {
+  const { createProviders } = await import('./providers.mjs');
+  const { replyToOwner } = await import('./owner-chat.mjs');
+  const input = '请用语音回答。如果能学一种乐器，小提琴和长笛你想学哪个？';
+  async function respond(answers, transport = 'qq', configured = true) {
+    const calls = [];
+    const providers = createProviders({ AI_BASE_URL: 'https://api.deepseek.com', AI_MODEL: 'fixture',
+      AI_API_KEY: 'fixture-chat', ...(configured ? { VOICE_BASE_URL: 'https://example.invalid', VOICE_MODEL: 'fixture', VOICE_NAME: 'fixture' } : {}) },
+      { fetchImpl: async (_url, opts) => {
+        const messages = JSON.parse(opts.body).messages;
+        calls.push(messages);
+        return Response.json({ choices: [{ message: { content: answers[calls.length - 1] } }] });
+      } });
+    const turn = await replyToOwner({ providers, settings: { ...settings, voiceReplyMode: 'mixed' }, transport,
+      messages: [], text: input, at });
+    assert.ok(calls[0].at(-1).content.includes('小提琴和长笛'));
+    return { calls, reply: turn.reply };
+  }
+  const denial = '我只能打字，不能发语音。';
+  const choice = '我想学长笛，喜欢它清亮的声音。';
+  const normal = await respond([denial + choice]);
+  assert.equal(normal.reply.text, choice);
+  assert.equal(normal.reply.voice, true);
+  assert.equal(normal.calls.length, 1);
+  assert.match(normal.calls[0][0].content, /本轮 QQ 私聊已接入语音/u);
+  const retried = await respond([denial, choice]);
+  assert.equal(retried.reply.text, choice);
+  assert.equal(retried.calls.length, 2);
+  const unavailable = await respond([denial], 'qq', false);
+  assert.match(unavailable.calls[0][0].content, /尚无可用语音/u);
+  assert.equal(unavailable.reply.text, denial);
+  const otherChannel = await respond([denial], 'onebot');
+  assert.doesNotMatch(otherChannel.calls[0][0].content, /QQ 私聊已接入语音/u);
+  assert.equal(otherChannel.reply.text, denial);
 });

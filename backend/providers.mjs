@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+import { bailianBeijingOrigin, bailianVoiceModel, isDesignedVoiceId, readProviderJson, validWave } from './bailian-voice-preview.mjs';
 import { groundedReply } from './grounded-reply.mjs';
 import { reportsCurrentWeather, weatherAnswer, weatherChatText } from './weather.mjs';
 import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, isBareGreeting, validGreeting } from './companion.mjs';
@@ -72,12 +74,67 @@ async function readAudioBytes(response, limit) {
   }
 }
 
+async function synthesizeBailian({ origin, apiKey, voiceId, text, fetchImpl, onUsage }) {
+  const signal = AbortSignal.timeout(30_000);
+  const audioUrl = await meterModelRequest({ onUsage, model: bailianVoiceModel, endpoint: bailianBeijingOrigin() }, async report => {
+    const response = await fetchImpl(new URL('/api/v1/services/audio/tts/SpeechSynthesizer', origin), {
+      method: 'POST', redirect: 'manual', signal, headers: apiHeaders(apiKey),
+      body: JSON.stringify({ model: bailianVoiceModel, input: { text, voice: voiceId, format: 'wav', sample_rate: 24_000 } }),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`百炼语音合成失败（HTTP ${response.status}）`);
+    }
+    const result = await readProviderJson(response, signal, 32_768);
+    report({ prompt_tokens: result?.usage?.input_tokens, completion_tokens: result?.usage?.output_tokens,
+      total_tokens: result?.usage?.total_tokens });
+    const url = URL.parse(result?.output?.audio?.url);
+    // DashScope may return a signed HTTP link. Upgrade the official bucket to TLS
+    // and always fetch it without the synthesis credential or redirects.
+    if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port
+      || url.hash || url.hostname !== 'dashscope-result-bj.oss-cn-beijing.aliyuncs.com') throw new Error('百炼未返回可用的语音文件');
+    url.protocol = 'https:';
+    return url;
+  });
+  const response = await fetchImpl(audioUrl, { redirect: 'manual', signal });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error('未能取得百炼语音文件');
+  }
+  const declared = response.headers.get('Content-Length');
+  const bytes = await readAudioBytes(response, 4_999_999);
+  const wav = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const completeObject = declared !== null && /^\d+$/.test(declared) && Number(declared) === bytes.length;
+  if (declared !== null && !completeObject) throw new Error('百炼语音文件下载不完整');
+  // The Beijing synthesizer can leave its streaming sentinels in the finalized
+  // 44-byte mono PCM header. Only fix that exact pair on a complete OSS object.
+  if (completeObject && wav.length > 44 && wav.length % 2 === 0
+    && wav.toString('ascii', 0, 4) === 'RIFF' && wav.readUInt32LE(4) === 0x7fffffbf
+    && wav.toString('ascii', 8, 16) === 'WAVEfmt ' && wav.readUInt32LE(16) === 16
+    && wav.readUInt16LE(20) === 1 && wav.readUInt16LE(22) === 1 && wav.readUInt32LE(24) === 24_000
+    && wav.readUInt32LE(28) === 48_000 && wav.readUInt16LE(32) === 2 && wav.readUInt16LE(34) === 16
+    && wav.toString('ascii', 36, 40) === 'data' && wav.readUInt32LE(40) === 0x7fffff9b) {
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.writeUInt32LE(wav.length - 44, 40);
+  }
+  if (!validWave(wav)) throw new Error('百炼返回的语音文件无效');
+  return { bytes, contentType: 'audio/wav', filename: 'yuban-voice.wav' };
+}
+
 function isHttpLink(value) {
   try {
     return ['https:', 'http:'].includes(new URL(value).protocol);
   } catch {
     return false;
   }
+}
+
+const voiceRefusal = /^(?:我(?:这边)?|这边)?(?:现在|目前|暂时)?(?:还|也|真的)?(?:发(?:不了|不出)语音|录不了语音|(?:无法|不能|没法|没办法|不会)(?:直接|给你)?(?:发(?:送)?|录(?:制)?|用)(?:一条|一段)?语音|只(?:能|可以)(?:给你|用)?(?:打字|文字)|语音(?:暂时)?(?:发不了|发不出|不能发))/u;
+const apologyOnly = /^(?:抱歉|不好意思|对不起|作为(?:一个)?AI)[呀啊，,。！!\s]*$/iu;
+function spokenAnswer(text) {
+  const clauses = text.split(/(?<=[，,。！？!?；;\n])/u);
+  if (!clauses.some(part => voiceRefusal.test(part.trim()))) return text.trim();
+  return clauses.filter(part => !voiceRefusal.test(part.trim()) && !apologyOnly.test(part.trim())).join('').trim();
 }
 
 function plainExcerpt(value) {
@@ -148,6 +205,10 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
   const voiceConfigured = Boolean(voiceEndpoint && (deepSeekVoice
     ? env.VOICE_API_KEY?.trim() && ['stella', 'tide'].includes(voiceName)
     : voiceModel && voiceName));
+  const bailianVoiceSelected = env.YUBAN_BAILIAN_VOICE_SELECTED === '1';
+  const bailianOrigin = bailianBeijingOrigin(env.BAILIAN_VOICE_WORKSPACE);
+  const bailianVoiceAvailable = Boolean(bailianVoiceSelected && bailianOrigin && env.BAILIAN_VOICE_API_KEY?.trim()
+    && isDesignedVoiceId(env.BAILIAN_VOICE_ID));
   const braveKey = env.BRAVE_SEARCH_API_KEY?.trim();
 
   async function complete(system, messages, timeoutMs = 20_000) {
@@ -274,12 +335,12 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
     modelId: modelConfigured ? model : undefined,
     searchConfigured: true,
     searchProvider: braveKey ? 'brave' : 'wikipedia',
-    voiceConfigured,
-    deepseekVoiceAvailable,
-    voiceAvailable: voiceConfigured || Boolean(localAudio),
-    voiceProvider: voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
+    voiceConfigured: bailianVoiceSelected ? bailianVoiceAvailable : voiceConfigured,
+    bailianVoiceSelected, bailianVoiceAvailable, deepseekVoiceAvailable,
+    voiceAvailable: bailianVoiceSelected ? bailianVoiceAvailable : voiceConfigured || Boolean(localAudio),
+    voiceProvider: bailianVoiceSelected ? (bailianVoiceAvailable ? 'bailian' : 'none') : voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
 
-    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, weatherContext, story = false, strict = false }) {
+    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, weatherContext, voiceDelivery, story = false, strict = false }) {
       const input = messages.findLast((message) => message.role === 'user')?.text?.trim() ?? '';
       const localWeatherAnswer = !strict && weatherAnswer(weatherContext, input);
       if (localWeatherAnswer && (!modelConfigured || weatherContext.status !== 'current')) return { text: localWeatherAnswer };
@@ -300,8 +361,17 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       if (observations) history.unshift(observations);
       try {
         const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
-          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, weatherContext, sourceMessages: selected, greetingOnly });
-        const text = await complete(system, history);
+          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, weatherContext, sourceMessages: selected, greetingOnly, voiceDelivery });
+        let text = await complete(system, history);
+        if (voiceDelivery === 'requested') {
+          text = spokenAnswer(text);
+          if (!text) {
+            // Retry only a pure capability refusal. Keep substantive parts of a
+            // first answer so answering a format request normally costs one call.
+            const retry = await complete(system + '\n直接回答对方的问题，说一句自然的台词即可。', history).catch(() => '');
+            text = spokenAnswer(retry) || (/晚安|睡觉/u.test(input) ? '晚安呀，睡个好觉。' : '你来啦，正想跟你说句话呢。');
+          }
+        }
         if (greetingOnly && greetingAssumesPast.test(text)) {
           return { text: demoCompanionReply(messages, displayName, ownerName, timeContext) };
         }
@@ -339,6 +409,11 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       const input = text?.replace(/[（(](?:轻(?:轻)?(?:地|的)?笑(?:了笑|了一声)?|笑(?:了笑|出声|着说)?|压低声音|小声(?:地)?说)[）)]/gu, '')
         .replace(/\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu, '').trim();
       if (!input || input.length > 600) return null;
+      if (bailianVoiceSelected) {
+        if (!bailianVoiceAvailable) return null;
+        return synthesizeBailian({ origin: bailianOrigin, apiKey: env.BAILIAN_VOICE_API_KEY, voiceId: env.BAILIAN_VOICE_ID,
+          text: input, fetchImpl, onUsage });
+      }
       // Account consent never authorizes using a gateway key at a different origin.
       if (useDeepseekVoice && !deepseekVoiceAvailable) return null;
       if (!useDeepseekVoice && !voiceConfigured) return localAudio ? localAudio(input) : null;

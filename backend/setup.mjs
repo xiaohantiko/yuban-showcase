@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
+import { bailianVoiceModel, isDesignedVoiceId, bailianBeijingOrigin, readProviderJson } from './bailian-voice-preview.mjs';
 import { chatCompletionBody } from './model-request.mjs';
 import { meterModelRequest } from './usage.mjs';
 
@@ -137,12 +138,18 @@ export function createSetup(env, store, { fetchImpl = fetch, clock = Date.now, o
     const records = await store.load();
     const model = decrypt('model', records.model, key);
     const qq = decrypt('qq', records.qq, key);
+    const voiceSelected = Boolean(records.voice && !records.voice.startsWith('off.'));
+    const voice = voiceSelected ? decrypt('voice', records.voice, key) : null;
     const modelSource = records.model !== undefined ? 'console' : env.AI_BASE_URL || env.AI_MODEL ? 'environment' : 'none';
     const qqSource = records.qq !== undefined ? 'console' : env.QQ_APP_ID || env.QQ_CLIENT_SECRET ? 'environment' : 'none';
     const modelNeedsRecovery = modelSource === 'console' && !model;
     const qqNeedsRecovery = qqSource === 'console' && !qq;
     const runtimeEnv = {
       ...env,
+      YUBAN_BAILIAN_VOICE_SELECTED: voiceSelected ? '1' : undefined,
+      BAILIAN_VOICE_API_KEY: voice?.apiKey,
+      BAILIAN_VOICE_WORKSPACE: voice?.workspaceId,
+      BAILIAN_VOICE_ID: voice?.voiceId,
       AI_BASE_URL: modelSource === 'console' ? model?.baseUrl : env.AI_BASE_URL,
       AI_MODEL: modelSource === 'console' ? model?.model : env.AI_MODEL,
       AI_API_KEY: modelSource === 'console' ? model?.apiKey : env.AI_API_KEY,
@@ -157,8 +164,10 @@ export function createSetup(env, store, { fetchImpl = fetch, clock = Date.now, o
       env: runtimeEnv,
       qqScope,
       qqVerifiedKey,
+      voiceRevision: records.voice ?? null,
       status: {
         canSave,
+        voice: { enabled: voiceSelected, voiceId: voice?.voiceId ?? null, needsRecovery: voiceSelected && !voice },
         model: {
           configured: Boolean(baseUrl && configuredSecret(runtimeEnv.AI_MODEL)), source: modelSource,
           baseUrl: modelBases.has(baseUrl) ? baseUrl : null, model: runtimeEnv.AI_MODEL || null,
@@ -192,5 +201,43 @@ export function createSetup(env, store, { fetchImpl = fetch, clock = Date.now, o
     return (await runtime()).status;
   }
 
-  return { runtime, save };
+  async function selectVoice(input) {
+    if (!canSave) fail(503, '当前管理台无法保存语音授权。');
+    const previous = (await store.load()).voice;
+    let next;
+    if (input.enabled === false && Object.keys(input).length === 1) {
+      // A fresh marker also invalidates verifications already in flight.
+      next = 'off.' + randomBytes(12).toString('hex');
+    } else {
+      if (input.enabled !== true || Object.keys(input).some(k => !['enabled', 'voiceId', 'apiKey', 'workspaceId'].includes(k))) {
+        fail(400, '请选择要启用或停用的百炼音色。');
+      }
+      const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
+      const workspaceId = input.workspaceId === undefined ? '' : input.workspaceId;
+      const voiceId = typeof input.voiceId === 'string' ? input.voiceId.trim() : '';
+      const origin = typeof workspaceId === 'string' && bailianBeijingOrigin(workspaceId);
+      if (!origin || !validSecret(apiKey) || !isDesignedVoiceId(voiceId)) {
+        fail(400, '请填写宇伴试听返回的音色 ID、百炼北京密钥及对应的业务空间。');
+      }
+      const signal = AbortSignal.timeout(15_000);
+      let output;
+      try {
+        const response = await fetchImpl(origin + '/api/v1/services/audio/tts/customization', {
+          method: 'POST', redirect: 'error', signal,
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+          body: JSON.stringify({ model: 'voice-enrollment', input: { action: 'query_voice', voice_id: voiceId } }),
+        });
+        if (response.ok) output = (await readProviderJson(response, signal, 32 * 1024))?.output;
+        else await response.body?.cancel();
+      } catch { /* Expose only a local error, never an upstream credential or resource URL. */ }
+      if (output?.voice_id !== voiceId || output.target_model !== bailianVoiceModel || output.status !== 'OK') {
+        fail(502, '未能验证此音色。请核对音色 ID、北京业务空间和密钥权限，并确认音色已就绪。');
+      }
+      next = encrypt('voice', { apiKey, workspaceId, voiceId }, key);
+    }
+    if (!await store.compareVoice(previous, next)) fail(409, '音色设置刚刚变更，请刷新后重试。');
+    return (await runtime()).status.voice;
+  }
+
+  return { runtime, save, selectVoice };
 }

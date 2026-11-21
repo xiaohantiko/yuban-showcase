@@ -306,7 +306,7 @@
         <div class="setting-row quiet-times"><div class="time-input"><label for="quiet-start">开始</label><input id="quiet-start" name="quietStart" type="time" required></div><span>—</span><div class="time-input"><label for="quiet-end">结束</label><input id="quiet-end" name="quietEnd" type="time" required></div></div>
         <div class="setting-row time-zone-row">
           <label for="voice-mode"><strong id="voice-mode-title">聊天回复方式</strong><small id="voice-mode-help"></small><small id="voice-service-status" aria-live="polite">正在读取语音合成状态…</small></label>
-          <select id="voice-mode" name="voiceReplyMode" aria-labelledby="voice-mode-title" aria-describedby="voice-mode-help voice-service-status"><option value="text">默认文字</option><option value="occasionally" id="voice-occasional">偶尔发语音</option><option value="voice">优先发语音</option></select>
+          <select id="voice-mode" name="voiceReplyMode" aria-labelledby="voice-mode-title" aria-describedby="voice-mode-help voice-service-status"><option value="text">默认文字</option><option value="occasionally" id="voice-occasional">偶尔发语音</option><option value="mixed" id="voice-mixed">文字语音穿插</option><option value="voice">优先发语音</option></select>
         </div>
         <div class="setting-row" id="deepseek-voice-consent-row" hidden>
           <label for="allow-deepseek-voice"><strong id="deepseek-voice-label">授权 DeepSeek 合成海星语音</strong><small id="deepseek-voice-terms">保存授权后，宇伴会用此账号已保存的 DeepSeek 密钥，只把要朗读的文字发给 DeepSeek。语音按字符单独计费。随时取消勾选并保存即可撤销授权。</small></label>
@@ -334,9 +334,21 @@
         <p id="voice-design-feedback" class="setup-feedback" role="status"></p>
         <div id="voice-design-result" hidden>
           <audio id="voice-design-audio" aria-label="百炼音色试听" controls preload="metadata"></audio>
-          <p>想留用这个声音，可以复制百炼音色 ID。</p>
+          <p>可以复制这个音色 ID，也可以在下方启用它。</p>
           <div class="webhook"><code id="voice-design-id"></code><button type="button" id="voice-design-copy" class="button subtle">复制音色 ID</button></div>
         </div>
+        <form id="voice-selection-form" class="member-feedback-form" autocomplete="off" hidden>
+          <h3>用于 QQ 语音回复</h3>
+          <p id="voice-selection-status" role="status"></p>
+          <label for="voice-selection-id">已试听的音色 ID</label>
+          <input id="voice-selection-id" required maxlength="200" autocapitalize="none" spellcheck="false" placeholder="生成试听后会自动填入，也可以粘贴此前保存的 ID">
+          <label for="voice-selection-key">授权日常语音的百炼 API 密钥</label>
+          <input id="voice-selection-key" type="password" required maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <small>使用上方填写的北京业务空间。启用后，宇伴为此账号加密保存密钥，将需要朗读的文字发送给百炼，按其语音合成价格计费。</small>
+          <div><button type="submit" id="voice-selection-apply" class="button primary">授权并用于 QQ</button>
+            <button type="button" id="voice-selection-off" class="button subtle" hidden>停用定制音色</button></div>
+        </form>
+        <p id="voice-selection-feedback" class="setup-feedback" role="status"></p>
       </details>
       <p class="aside-note"><svg><use href="#i-info"/></svg> 随时在 QQ 发「关闭问候」即可停止。QQ 官方机器人需具备单聊唤醒权限，发送频次由平台限制。</p>
     </section>

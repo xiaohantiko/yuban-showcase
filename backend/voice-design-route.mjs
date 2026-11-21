@@ -1,6 +1,7 @@
 import { isJSONContentType } from './ai-auth.mjs';
 import { designVoicePreview, PreviewError, validateDesignPreview } from './bailian-voice-preview.mjs';
 
+export const voiceSelectionRoute = '/api/voice/selection';
 export const voiceDesignRoute = '/api/voice/design-preview';
 const cooldown = 15_000;
 const day = 86_400_000;
@@ -20,13 +21,32 @@ function errorResponse(status, error, headers = {}) {
   return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store', ...headers } });
 }
 
-export async function voiceDesignResponse({ method, username, accountHint, trustedOrigin, contentType, readInput, reserve, fetchImpl, signal }) {
+function voiceRequestError({ method, username, accountHint, trustedOrigin, contentType }) {
   if (!username || (accountHint && accountHint !== encodeURIComponent(username))) {
     return errorResponse(401, '请先登录宇伴账号。', { 'X-Yuban-Login': '1' });
   }
   if (method !== 'POST') return errorResponse(405, '请使用 POST 请求。', { Allow: 'POST' });
-  if (!trustedOrigin) return errorResponse(403, '请在自己的宇伴管理台申请试听。');
+  if (!trustedOrigin) return errorResponse(403, '请在自己的宇伴管理台操作。');
   if (!isJSONContentType(contentType)) return errorResponse(415, '需要 application/json');
+  return null;
+}
+
+export async function voiceSelectionResponse({ readInput, selectVoice, ...request }) {
+  const error = voiceRequestError(request);
+  if (error) return error;
+  const input = await readInput();
+  try {
+    const status = await selectVoice(input);
+    return Response.json(status, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (e) {
+    if ([400, 403, 409, 502, 503].includes(e?.status)) return errorResponse(e.status, e.message);
+    return errorResponse(503, '当前无法保存音色设置。');
+  }
+}
+
+export async function voiceDesignResponse({ readInput, reserve, fetchImpl, signal, ...request }) {
+  const error = voiceRequestError(request);
+  if (error) return error;
   const data = await readInput();
   if (Object.keys(data).some(name => !['apiKey', 'workspaceId', 'description', 'previewText'].includes(name))) {
     return errorResponse(400, '试听表单包含不支持的字段。');

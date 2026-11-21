@@ -1,6 +1,7 @@
+import { selectedVoice, voiceAvailableFor } from './voice-replies.mjs';
 import { confirmedHistory, dueGreeting } from './greeting-schedule.mjs';
 import { createWeather, setWeatherGrant, visibleSettings, weatherGrantFor, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
-import { voiceDesignRoute, voiceDesignResponse, previewReservation } from './voice-design-route.mjs';
+import { voiceDesignRoute, voiceDesignResponse, voiceSelectionRoute, voiceSelectionResponse, previewReservation } from './voice-design-route.mjs';
 import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -177,6 +178,12 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
   const settingsStore = setupFile(`${file}.setup.json`);
   const setup = createSetup(env, {
     load: settingsStore.load,
+    compareVoice(previous, next) {
+      requireActive();
+      if (settingsStore.load().voice !== previous) return false;
+      settingsStore.save('voice', next);
+      return true;
+    },
     save(kind, value) { requireActive(); return settingsStore.save(kind, value); },
   }, { fetchImpl, clock, onUsage });
   const balanceMonitor = createBalanceMonitor({
@@ -283,6 +290,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       stats: { conversations: Number(Boolean(thread)), optedIn: Number(Boolean(thread?.optedIn)) },
       services: {
         voiceDesignPreview: Boolean(username),
+        ...(username && { voiceSelection: runtime.status.voice }),
         weather: weatherStatus(state.settings, owner, clock(), providerAvailable),
         outreach: outreachStatus(owner, transports.qq.capabilities?.proactive, thread?.optedIn, state.settings),
         model: providers.modelConfigured ? 'configured' : 'demo',
@@ -296,8 +304,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
             memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }) },
         search: providers.searchProvider ?? (providers.searchConfigured ? 'configured' : 'none'),
         deepseekVoiceAvailable: providers.deepseekVoiceAvailable === true,
-        voice: state.settings.useDeepseekVoice ? (providers.deepseekVoiceAvailable ? 'deepseek' : 'none')
-          : providers.voiceProvider ?? (providers.voiceConfigured ? 'remote' : 'browser'),
+        voice: selectedVoice(providers, state.settings, 'browser'),
         qq: statusOf('qq'), onebot: statusOf('onebot'),
       },
       logs: state.logs,
@@ -307,9 +314,13 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
   async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false, requiredWeatherGrant, followupCurrent } = {}) {
     const stillAllowed = () => !requiredWeatherGrant || weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock());
     if (!stillAllowed() || stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
-    let audio;
+    let audio, voiceRevision;
     if (message.voice && !proactive) {
-      try { audio = await runtime.providers.audio(message.text, { useDeepseekVoice: state.settings.useDeepseekVoice === true }); } catch { /* Reply in text if voice generation fails. */ }
+      try {
+        const current = await services();
+        voiceRevision = current.voiceRevision;
+        audio = await current.providers.audio(message.text, { useDeepseekVoice: state.settings.useDeepseekVoice === true });
+      } catch { /* Reply in text if voice generation fails. */ }
     }
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
     let ticket;
@@ -324,6 +335,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       if (!thread?.optedIn || thread.storyTurn || !state.settings.enabled || isQuiet(clock(), state.settings)) return false;
     }
     if (!stillAllowed() || (followupCurrent && !followupCurrent())) return false;
+    if (audio && (await setup.runtime()).voiceRevision !== voiceRevision) audio = null;
     const text = renderForTransport(message);
     const delivery = transport === 'qq' ? await deliverReply({ adapter: runtime.transports.qq, target, message, text, audio, proactive,
       notice: ticket?.text, isCurrent: async () => stillAllowed() && botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
@@ -521,7 +533,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
             }
           }
           const turn = await replyToOwner({
-            providers, settings, weatherContext, messages: thread.messages, text, memory: thread.memory, timeState: thread.timeState, ownerName: owner.name, at: clock(),
+            providers, settings, transport, weatherContext, messages: thread.messages, text, memory: thread.memory, timeState: thread.timeState, ownerName: owner.name, at: clock(),
             story: story.action === 'flush',
           });
           if (requiredWeatherGrant && !weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock())) {
@@ -751,6 +763,15 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         }
       } else if (!account && !fromLocalHost(req.headers.host)) fail(403, '控制台仅在本机可用');
       if (!requestIsSameOrigin(req)) fail(403, '不接受跨站请求');
+      if (path === voiceSelectionRoute) {
+        const secure = Boolean(req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https');
+        return await sendAuthResponse(res, await voiceSelectionResponse({
+          method, username, accountHint: req.headers['x-yuban-account'],
+          trustedOrigin: (secure || isLoopback(req)) && consoleOriginMatches(req, secure),
+          contentType: req.headers['content-type'], readInput: async () => (await readJSON(req)).data,
+          selectVoice: setup.selectVoice,
+        }));
+      }
       if (path === voiceDesignRoute) {
         const secure = Boolean(req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https');
         const controller = new AbortController();
@@ -963,7 +984,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         requireActive();
         const reply = await createReply(providers, state.settings, [], '今天工作很累，想歇一会儿。', { at: clock() });
         log('demo', 'check', 'ok', '内部收发链路测试通过');
-        return send(res, 200, { ok: true, text: reply.text, voiceAvailable: Boolean(state.settings.useDeepseekVoice ? providers.deepseekVoiceAvailable : providers.voiceAvailable), state: await snapshot(username, endpoints, account) });
+        return send(res, 200, { ok: true, text: reply.text, voiceAvailable: voiceAvailableFor(providers, state.settings), state: await snapshot(username, endpoints, account) });
       }
       return send(res, 404, { error: '找不到这个地址' });
     } catch (error) { return consoleError(res, error); }

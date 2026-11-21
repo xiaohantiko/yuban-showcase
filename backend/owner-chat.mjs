@@ -3,7 +3,7 @@ import { memoryContextFor, observeMemory, startMemoryLearning } from './memory.m
 import { lookupText } from './providers.mjs';
 import { prepareTimeContext } from './time-context.mjs';
 
-export async function replyToOwner({ providers, settings, messages, text, memory, timeState, timePolicyEnabled = true, weatherContext, ownerName, at = Date.now(), story = false }) {
+export async function replyToOwner({ providers, settings, transport, messages, text, memory, timeState, timePolicyEnabled = true, weatherContext, ownerName, at = Date.now(), story = false }) {
   const input = text.replace(voiceRequest, '').trim();
   const searching = !weatherContext?.requested && (searchRequest.test(input) || lookupText(input) !== null);
   const conversation = Boolean(input) && !searching;
@@ -14,7 +14,7 @@ export async function replyToOwner({ providers, settings, messages, text, memory
   const observed = remember ? observeMemory(memory, input, memoryOptions) : memory;
   const learning = remember ? startMemoryLearning(observed, { ...memoryOptions, text: input, messages, providers, at }) : { memory: observed };
   const reply = createReply(providers, settings, messages, text, {
-    at, ownerName, story, weatherContext, timeContext: timing.context, ...(searching ? { mode: 'search' } : {}),
+    at, ownerName, transport, story, weatherContext, timeContext: timing.context, ...(searching ? { mode: 'search' } : {}),
     memoryContext: remember ? memoryContextFor(learning.memory, { ...memoryOptions, query: input }) : undefined,
   });
   // Start the occasional classifier alongside the reply, but delivery never awaits it.

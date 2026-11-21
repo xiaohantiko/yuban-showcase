@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { occasionalVoice, requestedVoice, voiceModeFor, voiceRequest } from './voice-replies.mjs';
+import { mixedVoice, occasionalVoice, requestedVoice, voiceAvailableFor, voiceModeFor, voiceRequest } from './voice-replies.mjs';
 export { voiceRequest } from './voice-replies.mjs';
 import { followupMessages } from './followup.mjs';
 import { companionGreeting, companionTurnContext, validGreeting } from './companion.mjs';
@@ -75,7 +75,7 @@ export function mergeSettings(current, input) {
     next[key] = input[key];
   }
   if ('voiceReplyMode' in input || 'voiceReplies' in input) {
-    if ('voiceReplyMode' in input && !['text', 'occasionally', 'voice'].includes(input.voiceReplyMode)) throw new Error('请选择有效的语音回复方式');
+    if ('voiceReplyMode' in input && !['text', 'occasionally', 'mixed', 'voice'].includes(input.voiceReplyMode)) throw new Error('请选择有效的语音回复方式');
     if ('voiceReplies' in input && typeof input.voiceReplies !== 'boolean') throw new Error('语音开关值无效');
     next.voiceReplyMode = voiceModeFor(input);
     next.voiceReplies = next.voiceReplyMode === 'voice';
@@ -139,9 +139,10 @@ export const searchRequest = /^(?:[\s/]*(?:查资料|查一下|帮我查(?:一�
 export const commandOn = /^(?:\/|#)?\s*(?:开启|打开|启用)(?:问候|主动找我)$/;
 export const commandOff = /^(?:\/|#)?\s*(?:关闭|停用|取消|停止)(?:问候|主动找我)$/;
 
-export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName, timeContext, weatherContext, story = false } = {}) {
+export async function createReply(providers, settings, messages, text, { mode, voice, transport, at = Date.now(), memoryContext, ownerName, timeContext, weatherContext, story = false } = {}) {
   const { companionName, companionPersona, memoryEnabled = true } = settings;
   const requested = requestedVoice(text);
+  const voiceAvailable = voiceAvailableFor(providers, settings);
   const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
   const kind = !weatherContext?.requested && (mode === 'search' || searchRequest.test(input)) ? 'search' : 'chat';
   const query = kind === 'search' ? (input.replace(searchRequest, '').trim() || input) : input;
@@ -151,6 +152,7 @@ export async function createReply(providers, settings, messages, text, { mode, v
     result = await providers.reply({
       messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story, at: timeContext ? at : undefined }),
       mode: kind, companionName, companionPersona,
+      ...(transport === 'qq' && kind === 'chat' ? { voiceDelivery: voiceAvailable ? (requested ? 'requested' : 'available') : 'unavailable' } : {}),
       ...(kind === 'chat' ? { turnContext: companionTurnContext(messages, query) } : {}),
       ...(story && kind === 'chat' ? { story: true } : {}),
       ...(timeContext ? { timeContext } : {}),
@@ -165,11 +167,10 @@ export async function createReply(providers, settings, messages, text, { mode, v
   const sources = Array.isArray(result?.sources) ? result.sources.filter((item) => typeof item?.title === 'string' && /^https?:\/\//i.test(item?.url)).slice(0, 5) : [];
   const reply = typeof result?.text === 'string' && result.text.trim() ? result.text : '怎么啦，想跟我说说吗？';
   const preference = voiceModeFor(settings);
-  const voiceAvailable = settings.useDeepseekVoice === true ? providers.deepseekVoiceAvailable === true
-    : providers.voiceAvailable === true || providers.voiceConfigured === true;
-  const wantsVoice = requested ?? (voice === true || preference === 'voice' || (preference === 'occasionally' && voiceAvailable
-    && generated && result?.text && occasionalVoice({ messages, input, reply, at, quiet: isQuiet(at, { ...defaultSettings, ...settings }),
-      searching: kind === 'search', weather: Boolean(weatherContext?.requested), story, companionName })));
+  const context = { messages, input, reply, at, searching: kind === 'search', weather: Boolean(weatherContext?.requested), story, companionName };
+  const wantsVoice = requested ?? (voice === true || preference === 'voice' || (generated && result?.text && voiceAvailable
+    && ((preference === 'mixed' && mixedVoice(context)) || (preference === 'occasionally'
+      && occasionalVoice({ ...context, quiet: isQuiet(at, { ...defaultSettings, ...settings }) })))));
   return newMessage('assistant', reply, {
     ...(kind === 'chat' && !wantsVoice && !sources.length && ((result?.text?.length ?? 0) >= 52 || /\n\s*\n/u.test(result?.text ?? '')) ? { kind: 'chat' } : {}),
     at, ...(sources.length ? { sources } : {}), ...(wantsVoice && !sources.length ? { voice: true } : {}),

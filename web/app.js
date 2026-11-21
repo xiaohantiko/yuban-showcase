@@ -965,6 +965,8 @@ function closeVoiceDesign() {
   clearVoiceDesignAudio();
   $('voice-design').open = false;
   $('voice-design-form').reset();
+  $('voice-selection-form').reset();
+  feedback('voice-selection-feedback', '');
   $('voice-design-submit').disabled = false;
   $('voice-design-submit').textContent = '生成试听';
   $('voice-design-result').hidden = true;
@@ -1004,6 +1006,7 @@ $('voice-design-form').addEventListener('submit', async event => {
     voiceDesignUrl = URL.createObjectURL(audio);
     $('voice-design-audio').src = voiceDesignUrl;
     $('voice-design-id').textContent = voiceId;
+    $('voice-selection-id').value = voiceId;
     $('voice-design-result').hidden = false;
     button.textContent = '重新生成试听';
     feedback('voice-design-feedback', '试听已生成。点击播放即可收听，QQ 仍用原音色。', 'success');
@@ -1018,6 +1021,38 @@ $('voice-design-form').addEventListener('submit', async event => {
     }
   }
 });
+
+let voiceSelectionPending = false;
+async function selectQQVoice(enabled) {
+  const account = accountUsername();
+  if (voiceSelectionPending || !account || !state?.services?.voiceSelection) return;
+  const payload = { enabled };
+  if (enabled) {
+    payload.voiceId = $('voice-selection-id').value.trim();
+    payload.apiKey = $('voice-selection-key').value.trim();
+    payload.workspaceId = $('voice-design-workspace').value.trim();
+    $('voice-selection-key').value = '';
+  }
+  voiceSelectionPending = true;
+  $('voice-selection-apply').disabled = $('voice-selection-off').disabled = true;
+  feedback('voice-selection-feedback', enabled ? '正在验证并启用这个音色…' : '正在停用定制音色…');
+  try {
+    const status = await request('/api/voice/selection', 'POST', payload);
+    if (account !== accountUsername()) return;
+    state.services.voiceSelection = status;
+    await refresh();
+    if (account === accountUsername() && $('voice-design').open) {
+      feedback('voice-selection-feedback', enabled ? '已启用。下次 QQ 发语音时会使用这个声音。' : '已停用，QQ 将按原先的语音设置回复。', 'success');
+    }
+  } catch (err) {
+    if (account === accountUsername() && $('voice-design').open) feedback('voice-selection-feedback', err.message, 'error');
+  } finally {
+    voiceSelectionPending = false;
+    $('voice-selection-apply').disabled = $('voice-selection-off').disabled = false;
+  }
+}
+$('voice-selection-form').addEventListener('submit', event => { event.preventDefault(); void selectQQVoice(true); });
+$('voice-selection-off').addEventListener('click', () => { void selectQQVoice(false); });
 
 function activeRoute() {
   const key = location.hash.slice(1);
@@ -1511,6 +1546,7 @@ function syncGreetingForm() {
   const voiceHelp = {
     text: '平时发文字。想听语音时，可以在 QQ 单独提出来。',
     occasionally: '平时以文字为主。聊到晚安、安慰或好消息时，伙伴偶尔会发一小段语音。',
+    mixed: '日常闲聊大约一半用语音回复。想单独听语音或看文字，可以直接在 QQ 里说。',
     voice: '合适的闲聊优先发语音。你也可以在 QQ 说这条想看文字。',
   };
   $('voice-mode-help').textContent = voiceHelp[field('voiceReplyMode').value] + ' 资料查询和主动问候发文字。';
@@ -1547,6 +1583,11 @@ function render(next) {
   $('logout').hidden = !account;
   const canDesignVoice = Boolean(account && services.voiceDesignPreview === true && window.isSecureContext);
   $('voice-design').hidden = !canDesignVoice;
+  const selection = services.voiceSelection;
+  $('voice-selection-form').hidden = !canDesignVoice || !selection;
+  $('voice-selection-off').hidden = !selection?.enabled;
+  $('voice-selection-status').textContent = selection?.needsRecovery ? '当前定制音色需要重新授权，QQ 暂时发送文字。'
+    : selection?.enabled ? 'QQ 当前使用的百炼音色：' + selection.voiceId : '可选用本次试听或之前在宇伴生成的声音。';
   if (!canDesignVoice && $('voice-design').open) closeVoiceDesign();
   $('environment').lastChild.textContent = cloud ? '云端控制台' : desktopPreview ? '离线预览' : '本地预览';
   $('sidebar-status').textContent = cloud ? '云端服务' : '控制台';
@@ -1587,17 +1628,19 @@ function render(next) {
   badge('ai-api-status', !aiAvailable ? '此账号未开放' : desktopPreview ? '待连接云端' : aiEnabled ? '已启用' : '尚未启用', aiAvailable && aiEnabled && !desktopPreview ? 'success' : 'neutral');
   showAIAddress(scoped || cloud || aiEnabled ? aiURL : '', aiAvailable);
   badge('search-status', ({ wikipedia: '维基百科', brave: '网页搜索', configured: '已配置' })[services.search] || '待配置', services.search === 'none' ? 'neutral' : 'success');
-  const deepseekUnavailable = settings.useDeepseekVoice === true && services.deepseekVoiceAvailable !== true;
-  const voice = !deepseekUnavailable && ({ remote: '云端语音合成已配置', macos: '服务器本机语音合成已配置', deepseek: 'DeepSeek 海星语音已配置' })[services.voice];
+  const deepseekUnavailable = !selection?.enabled && settings.useDeepseekVoice === true && services.deepseekVoiceAvailable !== true;
+  const voice = !deepseekUnavailable && ({ remote: '云端语音合成已配置', macos: '服务器本机语音合成已配置', deepseek: 'DeepSeek 海星语音已配置', bailian: '正在使用百炼定制音色' })[services.voice];
   const deepseekAvailable = services.deepseekVoiceAvailable === true;
   const deepseekAuthorized = settings.useDeepseekVoice === true;
-  $('deepseek-voice-consent-row').hidden = !deepseekAvailable && !deepseekAuthorized;
+  $('deepseek-voice-consent-row').hidden = Boolean(selection?.enabled) || (!deepseekAvailable && !deepseekAuthorized);
   badge('voice-status', voice || '语音合成待配置', voice ? 'success' : 'neutral');
   const legacyVoice = !Object.hasOwn(settings, 'voiceReplyMode');
   $('voice-occasional').disabled = legacyVoice;
+  $('voice-mixed').disabled = !selection;
   let voiceStatus = voice ? voice + '。' : '语音合成尚未配置，当前会发文字。';
-  if (!voice && deepseekAvailable) voiceStatus = '当前 DeepSeek 接口支持语音。授权前仍会发文字。';
-  if (deepseekAuthorized && !deepseekAvailable) voiceStatus = '已保留 DeepSeek 语音授权。当前聊天接口不适用，暂时发文字。';
+  if (!voice && !selection?.enabled && deepseekAvailable) voiceStatus = '当前 DeepSeek 接口支持语音。授权前仍会发文字。';
+  if (selection?.needsRecovery) voiceStatus = '百炼定制音色需要重新授权，当前会发文字。';
+  else if (!selection?.enabled && deepseekAuthorized && !deepseekAvailable) voiceStatus = '已保留 DeepSeek 语音授权。当前聊天接口不适用，暂时发文字。';
   $('voice-service-status').textContent = voiceStatus + (legacyVoice ? '升级云端服务后可选「偶尔发语音」。' : '');
   $('quick-greet').setAttribute('aria-checked', String(settings.enabled));
   $('quick-greet').disabled = false;
@@ -1703,7 +1746,7 @@ $('settings').addEventListener('submit', async (event) => {
   for (const name of Object.keys(fields)) {
     const input = field(name);
     if (name === 'afterMinutes' && input.disabled) continue;
-    if (name === 'useDeepseekVoice' && (!deepseekVoiceEdited || input.checked === (state.settings.useDeepseekVoice === true)
+    if (name === 'useDeepseekVoice' && (state.services.voiceSelection?.enabled || !deepseekVoiceEdited || input.checked === (state.settings.useDeepseekVoice === true)
       || (input.checked && state.services.deepseekVoiceAvailable !== true))) continue;
     if (name === 'voiceReplyMode' && !Object.hasOwn(state.settings, name)) {
       payload.voiceReplies = input.value === 'voice';

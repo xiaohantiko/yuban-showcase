@@ -1,6 +1,6 @@
 export function voiceModeFor(settings) {
   const mode = settings?.voiceReplyMode;
-  return ['text', 'occasionally', 'voice'].includes(mode) ? mode : settings?.voiceReplies === true ? 'voice' : 'text';
+  return ['text', 'occasionally', 'mixed', 'voice'].includes(mode) ? mode : settings?.voiceReplies === true ? 'voice' : 'text';
 }
 
 // Kept separate from ordinary discussion of voice models, settings or messages.
@@ -27,6 +27,31 @@ const sharedLaughter = /^(?:(?:真的?|快|要|刚刚?)?笑死我了|我(?:笑�
 const narratedQuote = /(?:他|她|朋友|同事|对方)(?:刚刚?|刚才)?(?:说|发来|写道)(?:了句)?[：:，,「“"]/u;
 const dampened = /开心不起来|高兴不起来|才怪|假装开心|没(?:有|能)?(?:抢到|拿到|考过|通过)|一点也不开心/u;
 
+function wasVoice(message) {
+  return message?.voiceDelivered === true || (message?.voiceDelivered == null && message?.voice === true);
+}
+
+export function mixedVoice({ messages, input, reply, searching, weather, story }) {
+  if (searching || weather || story || reply.length > 240 || !reply.trim()
+    || quietContent.test(input) || quietContent.test(reply) || factual.test(input)) return false;
+  // One delivered turn counts once, including a text reply split into multiple QQ bubbles.
+  const previous = messages.findLast(m => m?.role === 'assistant' && !m.pendingDelivery
+    && (!m.kind || m.kind === 'chat' || m.kind === 'reply') && typeof m.text === 'string' && m.text.trim());
+  return !wasVoice(previous);
+}
+
+export function selectedVoice(providers, settings, fallback = 'none') {
+  if (providers.bailianVoiceSelected) return providers.bailianVoiceAvailable ? 'bailian' : 'none';
+  if (settings.useDeepseekVoice) return providers.deepseekVoiceAvailable ? 'deepseek' : 'none';
+  return providers.voiceProvider ?? (providers.voiceConfigured ? 'remote' : fallback);
+}
+
+export function voiceAvailableFor(providers, settings) {
+  if (providers.bailianVoiceSelected) return providers.bailianVoiceAvailable === true;
+  if (settings.useDeepseekVoice) return providers.deepseekVoiceAvailable === true;
+  return providers.voiceAvailable === true || providers.voiceConfigured === true;
+}
+
 export function occasionalVoice({ messages, input, reply, at, quiet, searching, weather, story, companionName }) {
   if (quiet || searching || weather || story || input.length > 110 || reply.length > 100 || !reply.trim()
     || /\n/u.test(input + reply) || quietContent.test(input) || quietContent.test(reply) || factual.test(input)) return false;
@@ -43,6 +68,5 @@ export function occasionalVoice({ messages, input, reply, at, quiet, searching, 
   const shared = recent.filter(m => m.role === 'user' && m.at >= at - 90 * 60_000 && typeof m.text === 'string' && m.text.trim());
   if (replies.length < 4 || shared.length < 2) return false;
   // An older message may predate delivery receipts. Preserve its recorded voice intent conservatively.
-  const wasVoice = m => m.voiceDelivered === true || (m.voiceDelivered == null && m.voice === true);
   return !replies.slice(-4).some(wasVoice) && !replies.some(m => wasVoice(m) && at - m.at < 90 * 60_000);
 }

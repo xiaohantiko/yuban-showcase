@@ -1,11 +1,22 @@
 import { Buffer } from 'node:buffer';
 
-const targetModel = 'qwen-audio-3.1-tts-flash';
-const voicePrefix = `${targetModel}-vd-yuban-`;
+export const bailianVoiceModel = 'qwen-audio-3.1-tts-flash';
+const voicePrefix = `${bailianVoiceModel}-vd-yuban-`;
 const sampleRate = 24_000;
 const maxWaveBytes = 4 * 1024 * 1024;
 const maxResponseBytes = Math.ceil(maxWaveBytes / 3) * 4 + 8192;
 const invalidAudio = '百炼返回的试听音频格式不正确或文件过大。';
+
+export function isDesignedVoiceId(value) {
+  return typeof value === 'string' && value.length <= 200 && value.startsWith(voicePrefix)
+    && /^[a-zA-Z0-9_-]+$/.test(value.slice(voicePrefix.length));
+}
+
+export function bailianBeijingOrigin(workspaceId = '') {
+  if (workspaceId === '') return 'https://dashscope.aliyuncs.com';
+  if (typeof workspaceId !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(workspaceId)) return null;
+  return `https://${workspaceId}.cn-beijing.maas.aliyuncs.com`;
+}
 
 export class PreviewError extends Error {
   constructor(status, message) {
@@ -30,7 +41,7 @@ export function validateDesignPreview(input = {}) {
   if (!/^[A-Za-z0-9._~+/=-]{1,512}$/.test(apiKey)) throw new PreviewError(400, '请填写本次试听使用的百炼 API Key。');
   const value = input.workspaceId === undefined ? '' : input.workspaceId;
   const workspaceId = typeof value === 'string' ? value.trim() : null;
-  if (workspaceId === null || (workspaceId && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(workspaceId))) {
+  if (!bailianBeijingOrigin(workspaceId)) {
     throw new PreviewError(400, '请填写北京地域业务空间的 ID，或留空使用北京通用入口。');
   }
   const description = previewInput(input.description, '声音描述', 1, 500);
@@ -39,7 +50,7 @@ export function validateDesignPreview(input = {}) {
 }
 
 // Validate RIFF chunk lengths and PCM layout before returning provider bytes to a player.
-function validWave(bytes) {
+export function validWave(bytes) {
   if (bytes.length < 44 || bytes.toString('latin1', 0, 4) !== 'RIFF'
       || bytes.readUInt32LE(4) !== bytes.length - 8 || bytes.toString('latin1', 8, 12) !== 'WAVE') return false;
   let frameSize = 0;
@@ -70,7 +81,7 @@ function validWave(bytes) {
   return offset === bytes.length && dataSize > 0;
 }
 
-async function readProviderJson(response, signal, limit) {
+export async function readProviderJson(response, signal, limit) {
   const reader = response.body?.getReader();
   if (!reader) throw new PreviewError(502, invalidAudio);
   const cancel = () => { void reader.cancel().catch(() => {}); };
@@ -109,9 +120,8 @@ async function previewOutput(response, signal) {
   const audio = output?.preview_audio;
   const voiceId = output?.voice_id;
   // Creation may omit the model echo. The returned ID must still carry the requested model and prefix.
-  if (!output || (Object.hasOwn(output, 'target_model') && output.target_model !== targetModel)
-      || typeof voiceId !== 'string' || voiceId.length > 200
-      || !voiceId.startsWith(voicePrefix) || !/^[a-zA-Z0-9_-]+$/.test(voiceId.slice(voicePrefix.length))
+  if (!output || (Object.hasOwn(output, 'target_model') && output.target_model !== bailianVoiceModel)
+      || !isDesignedVoiceId(voiceId)
       || audio?.response_format !== 'wav' || audio.sample_rate !== sampleRate || typeof audio.data !== 'string'
       || audio.data.length > Math.ceil(maxWaveBytes / 3) * 4 || audio.data.length % 4
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(audio.data)) throw new PreviewError(502, invalidAudio);
@@ -160,8 +170,7 @@ async function vendorError(response, signal) {
 
 export async function designVoicePreview(input = {}, { fetchImpl = fetch, signal } = {}) {
   const { apiKey, workspaceId, description, previewText } = validateDesignPreview(input);
-  const host = workspaceId ? `${workspaceId}.cn-beijing.maas.aliyuncs.com` : 'dashscope.aliyuncs.com';
-  const url = new URL(`https://${host}/api/v1/services/audio/tts/customization`);
+  const url = new URL('/api/v1/services/audio/tts/customization', bailianBeijingOrigin(workspaceId));
   const timeout = AbortSignal.timeout(180_000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
@@ -172,7 +181,7 @@ export async function designVoicePreview(input = {}, { fetchImpl = fetch, signal
       body: JSON.stringify({
         model: 'voice-enrollment',
         input: {
-          action: 'create_voice', target_model: targetModel, prefix: 'yuban',
+          action: 'create_voice', target_model: bailianVoiceModel, prefix: 'yuban',
           voice_prompt: description, preview_text: previewText,
           language_hints: [/\p{Script=Han}/u.test(previewText) ? 'zh' : 'en'],
         },
