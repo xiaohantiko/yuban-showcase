@@ -105,6 +105,7 @@
                   <a id="setup-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a>
                   <div id="setup-custom-model" class="setup-custom" hidden><label for="setup-base">接口地址</label><input id="setup-base" type="url" placeholder="https://example.com/v1"><label for="setup-model-id">模型 ID</label><input id="setup-model-id" type="text" maxlength="160" placeholder="服务商提供的模型名称"><small>自定义地址需先由部署者在云端允许。</small></div>
                   <label for="setup-model-key">API 密钥</label><input id="setup-model-key" type="password" required maxlength="1024" placeholder="粘贴服务商提供的密钥" spellcheck="false" autocomplete="off">
+                  <a id="setup-provider-recharge" class="link" target="_blank" rel="noopener noreferrer" hidden>前往官方充值</a>
                   <small id="setup-model-key-note" aria-live="polite">首次接入或更换服务商时，需要填写对应的密钥。</small>
                   <div class="setup-actions"><button class="button primary" type="submit">验证并保存 AI</button><a id="setup-provider-docs" class="link" target="_blank" rel="noopener noreferrer">查看接口文档</a></div>
                 </fieldset>
@@ -186,7 +187,7 @@
         <p id="active-model">选择一个模型查看配置。模型密钥只填在云端。</p>
         <ul class="model-options" id="model-options" aria-label="可查看的模型配置"></ul>
         <div class="model-detail" id="model-detail" hidden>
-          <div class="model-detail-head"><p id="model-note"></p><a class="link" id="model-portal" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a><a class="link" id="model-docs" href="https://developers.openai.com/" target="_blank" rel="noreferrer">官方文档 <svg><use href="#i-chevron"/></svg></a></div>
+          <div class="model-detail-head"><p id="model-note"></p><a class="link" id="model-portal" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a><a id="model-recharge" class="link" target="_blank" rel="noopener noreferrer" hidden>前往官方充值</a><a class="link" id="model-docs" href="https://developers.openai.com/" target="_blank" rel="noreferrer">官方文档 <svg><use href="#i-chevron"/></svg></a></div>
           <pre class="model-config" id="model-config"></pre>
           <div class="model-detail-foot"><span>复制后填到云端，再设置服务商的 <code>AI_API_KEY</code>。</span><button type="button" class="button subtle" id="copy-model"><svg><use href="#i-copy"/></svg>复制配置</button></div>
         </div>
@@ -313,6 +314,30 @@
         </div>
         <div class="form-footer"><span id="opted-in">—</span><button class="button primary" type="submit">保存设置</button></div>
       </form>
+      <details id="voice-design" class="card ai-card" hidden>
+        <summary>用文字设计声音（百炼）</summary>
+        <p>百炼会收到你填写的声音描述和台词，成功后在你的百炼账号免费创建一个音色。每个宇伴账号每 15 秒可提交一次，24 小时最多 12 次。反复播放同一段试听不占次数。<a class="link" href="https://help.aliyun.com/zh/model-studio/voice-design-user-guide" target="_blank" rel="noopener noreferrer">查看百炼说明</a></p>
+        <form id="voice-design-form" class="member-feedback-form" autocomplete="off">
+          <label for="voice-design-key">百炼 API 密钥（仅本次使用，提交后清空）</label>
+          <input id="voice-design-key" type="password" required maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="填写华北 2（北京）地域的密钥">
+          <small>使用受限密钥时，需允许「大模型声音复刻及声音设计」和「Qwen-Audio-3.1-TTS-Flash」。</small>
+          <a id="voice-design-recharge" class="link" target="_blank" rel="noopener noreferrer" hidden>前往官方充值</a>
+          <label for="voice-design-workspace">北京业务空间 ID（选填）</label>
+          <input id="voice-design-workspace" type="text" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="如 llm-…，可从北京 API Host 开头复制" aria-describedby="voice-design-workspace-hint">
+          <small id="voice-design-workspace-hint">留空使用北京通用入口。新账号未能生成试听时，请填入北京 API Host 第一段的业务空间 ID。</small>
+          <label for="voice-design-description">声音描述（中文或英文，最多 500 字）</label>
+          <textarea id="voice-design-description" required maxlength="500" rows="3" placeholder="例如：年轻女声，音色明亮，像朋友坐在旁边轻轻说话。"></textarea>
+          <label for="voice-design-text">试听台词（15 至 200 字）</label>
+          <textarea id="voice-design-text" required minlength="15" maxlength="200" rows="2" >刚才那首歌的前奏一响，我就忍不住跟着哼了起来。</textarea>
+          <button class="button primary" id="voice-design-submit" type="submit">生成试听</button>
+        </form>
+        <p id="voice-design-feedback" class="setup-feedback" role="status"></p>
+        <div id="voice-design-result" hidden>
+          <audio id="voice-design-audio" aria-label="百炼音色试听" controls preload="metadata"></audio>
+          <p>想留用这个声音，可以复制百炼音色 ID。</p>
+          <div class="webhook"><code id="voice-design-id"></code><button type="button" id="voice-design-copy" class="button subtle">复制音色 ID</button></div>
+        </div>
+      </details>
       <p class="aside-note"><svg><use href="#i-info"/></svg> 随时在 QQ 发「关闭问候」即可停止。QQ 官方机器人需具备单聊唤醒权限，发送频次由平台限制。</p>
     </section>
 
@@ -337,7 +362,7 @@
             <p class="usage-current-model" id="balance-amount"></p>
             <p class="usage-current-provider" id="balance-details" role="status">正在读取余额…</p>
           </div>
-          <a id="balance-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a>
+          <div class="setup-actions"><a id="balance-provider-portal" class="link" target="_blank" rel="noopener noreferrer" hidden>打开 API 平台</a><a id="balance-recharge" class="link" target="_blank" rel="noopener noreferrer" hidden>前往官方充值</a></div>
         </section>
         <div class="usage-periods">
           <section class="card usage-period" aria-labelledby="usage-today-title"><h2 id="usage-today-title">今天</h2><dl class="usage-kpis" id="usage-today"></dl></section>

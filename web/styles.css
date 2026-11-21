@@ -42,7 +42,7 @@ dialog{max-width:min(520px,calc(100% - 32px));border:1px solid var(--line);borde
 .model-options button{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .model-options button strong{font-weight:650;font-size:13px;flex:none}.model-options button code{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .model-options button:hover{border-color:#c9b1df}.model-options button[aria-pressed="true"]{border-color:#b99bd8;background:#f0e8f8}
-.model-detail{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fdfafd}.model-detail-head,.model-detail-foot,.companion-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.model-detail-head p,.model-detail-foot span,.companion-actions>span{color:var(--muted);font-size:12px;line-height:1.55}.model-detail-head .link{flex:none}
+.model-detail{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fdfafd}.model-detail-head,.model-detail-foot,.companion-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.model-detail-head p,.model-detail-foot span,.companion-actions>span{color:var(--muted);font-size:12px;line-height:1.55}.model-detail-head{flex-wrap:wrap}.model-detail-head p{flex:1 1 16em}.model-detail-head .link{flex:none}
 .model-config{margin:9px 0;padding:8px 9px;border-radius:6px;background:#f2ebf7;color:var(--strong);font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.model-card .model-more{font-size:12px;margin-bottom:0}
 .companion-actions{margin-top:13px}
 .topbar .topbar-tools{justify-content:flex-end;flex-wrap:wrap;min-width:0}
@@ -135,3 +135,6 @@ dialog{max-width:min(520px,calc(100% - 32px));border:1px solid var(--line);borde
 #care-consent h2 { font-size: 21px; }
 #care-detail { margin: 12px 0; }
 #care-consent .plugin-buttons { justify-content: flex-end; padding: 16px 0 0; }
+#voice-design { margin-top: 14px; }
+#voice-design-form { padding: 0; }
+#voice-design-audio { max-width: 100%; margin-top: 8px; }

@@ -1,5 +1,6 @@
 import { confirmedHistory, dueGreeting } from './greeting-schedule.mjs';
 import { createWeather, setWeatherGrant, visibleSettings, weatherGrantFor, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
+import { voiceDesignRoute, voiceDesignResponse, previewReservation } from './voice-design-route.mjs';
 import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -281,6 +282,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       runtime: 'local',
       stats: { conversations: Number(Boolean(thread)), optedIn: Number(Boolean(thread?.optedIn)) },
       services: {
+        voiceDesignPreview: Boolean(username),
         weather: weatherStatus(state.settings, owner, clock(), providerAvailable),
         outreach: outreachStatus(owner, transports.qq.capabilities?.proactive, thread?.optedIn, state.settings),
         model: providers.modelConfigured ? 'configured' : 'demo',
@@ -749,6 +751,29 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         }
       } else if (!account && !fromLocalHost(req.headers.host)) fail(403, '控制台仅在本机可用');
       if (!requestIsSameOrigin(req)) fail(403, '不接受跨站请求');
+      if (path === voiceDesignRoute) {
+        const secure = Boolean(req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https');
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        res.once('close', cancel);
+        try {
+          const result = await voiceDesignResponse({
+            method, username, accountHint: req.headers['x-yuban-account'],
+            trustedOrigin: (secure || isLoopback(req)) && consoleOriginMatches(req, secure),
+            contentType: req.headers['content-type'], readInput: async () => (await readJSON(req)).data,
+            reserve() {
+              requireActive();
+              const result = previewReservation(settingsStore.load().voiceDesignAttempts ?? [], clock());
+              if (result.attempts) settingsStore.save('voiceDesignAttempts', result.attempts);
+              return result;
+            },
+            fetchImpl, signal: controller.signal,
+          });
+          requireActive();
+          if (!res.destroyed) return await sendAuthResponse(res, result);
+          return;
+        } finally { res.off('close', cancel); }
+      }
       if (path === OWNER_ROUTE || path === OWNER_CODE_ROUTE) {
         if (!authToken) fail(503, '请先设置宇伴控制台管理口令。');
         if (!ownerManagementIsSecure(req)) fail(403, '请通过 HTTPS 打开主人设置。');

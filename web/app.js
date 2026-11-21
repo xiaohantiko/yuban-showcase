@@ -126,6 +126,7 @@ async function copyAddress(id, message) {
 }
 function renderModelCatalog() {
   if (typeof MODEL_CATALOG === 'undefined' || !MODEL_CATALOG.length) return;
+  setProviderRecharge('voice-design-recharge', MODEL_CATALOG.find(provider => provider.id === 'qwen'));
   const models = MODEL_CATALOG.flatMap((provider) => provider.models.map((item) => ({ base: provider.base, docs: provider.docs, ...item, provider })));
   const list = $('model-options');
   const buttons = [];
@@ -134,6 +135,7 @@ function renderModelCatalog() {
     buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)));
     $('model-note').textContent = item.note;
     setProviderPortal($('model-portal'), item.provider);
+    setProviderRecharge('model-recharge', item.provider);
     $('model-docs').href = item.docs;
     $('model-docs').setAttribute('aria-label', `${item.name} 官方文档`);
     $('model-config').textContent = `AI_BASE_URL=${item.base}\nAI_MODEL=${item.model}`;
@@ -481,6 +483,14 @@ function setProviderPortal(link, provider, baseUrl) {
     link.textContent = provider ? `打开 ${provider.name} API 平台` : '打开自定义 API 网站';
   } else link.removeAttribute('href');
 }
+function setProviderRecharge(id, provider) {
+  const link = $(id);
+  const billing = provider?.recharge;
+  link.hidden = !billing;
+  if (!billing) { link.removeAttribute('href'); return; }
+  link.href = billing.href;
+  link.textContent = billing.label;
+}
 function renderSetupModelDescription() {
   const provider = setupSelectedProvider();
   const preset = provider?.models.find(({ model }) => model === $('setup-preset-model').value);
@@ -488,6 +498,7 @@ function renderSetupModelDescription() {
   note.textContent = preset?.note ?? '';
   note.hidden = !preset?.note;
   setProviderPortal($('setup-provider-portal'), provider, provider ? null : $('setup-base').value.trim());
+  setProviderRecharge('setup-provider-recharge', provider);
   const docs = $('setup-provider-docs');
   docs.hidden = !provider;
   if (provider) docs.href = preset?.docs ?? provider.docs;
@@ -937,6 +948,77 @@ $('care-confirm').addEventListener('click', () => {
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshAllowedWeather(); });
 
+let voiceDesignRequest;
+let voiceDesignUrl = '';
+function clearVoiceDesignAudio() {
+  if (!voiceDesignUrl) return;
+  const audio = $('voice-design-audio');
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
+  URL.revokeObjectURL(voiceDesignUrl);
+  voiceDesignUrl = '';
+}
+function closeVoiceDesign() {
+  voiceDesignRequest?.abort();
+  voiceDesignRequest = undefined;
+  clearVoiceDesignAudio();
+  $('voice-design').open = false;
+  $('voice-design-form').reset();
+  $('voice-design-submit').disabled = false;
+  $('voice-design-submit').textContent = '生成试听';
+  $('voice-design-result').hidden = true;
+  $('voice-design-id').textContent = '';
+  feedback('voice-design-feedback', '');
+}
+$('voice-design').addEventListener('toggle', () => { if (!$('voice-design').open) closeVoiceDesign(); });
+$('voice-design-copy').addEventListener('click', () => copyCodeBlock('voice-design-id', '已复制百炼音色 ID'));
+$('voice-design-audio').addEventListener('error', () => {
+  if (voiceDesignUrl && $('voice-design-audio').currentSrc === voiceDesignUrl) {
+    feedback('voice-design-feedback', '此设备无法播放这段试听。可以复制音色 ID，在百炼中查看。', 'error');
+  }
+});
+$('voice-design-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const account = accountUsername();
+  if (voiceDesignRequest || !account || !state?.services?.voiceDesignPreview || !$('voice-design').open) return;
+  const apiKey = $('voice-design-key').value.trim();
+  const workspaceId = $('voice-design-workspace').value.trim();
+  const description = $('voice-design-description').value.trim();
+  const previewText = $('voice-design-text').value.trim();
+  if (!apiKey || !description || Array.from(previewText).length < 15) {
+    feedback('voice-design-feedback', '请填写密钥和声音描述，试听台词至少需要 15 个字。', 'error');
+    return;
+  }
+  const controller = new AbortController();
+  voiceDesignRequest = controller;
+  const button = $('voice-design-submit');
+  button.disabled = true;
+  $('voice-design-key').value = '';
+  feedback('voice-design-feedback', '正在向百炼生成试听…');
+  try {
+    const { audio, voiceId } = await request('/api/voice/design-preview', 'POST',
+      { apiKey, ...(workspaceId && { workspaceId }), description, previewText }, controller);
+    if (voiceDesignRequest !== controller || account !== accountUsername() || !$('voice-design').open) return;
+    clearVoiceDesignAudio();
+    voiceDesignUrl = URL.createObjectURL(audio);
+    $('voice-design-audio').src = voiceDesignUrl;
+    $('voice-design-id').textContent = voiceId;
+    $('voice-design-result').hidden = false;
+    button.textContent = '重新生成试听';
+    feedback('voice-design-feedback', '试听已生成。点击播放即可收听，QQ 仍用原音色。', 'success');
+  } catch (error) {
+    if (voiceDesignRequest !== controller) return;
+    feedback('voice-design-feedback', error.name === 'AbortError' ? '试听请求超时，可在百炼查看是否已创建音色。'
+      : error.status ? error.message : '暂时无法获取试听，请检查网络后重试。', 'error');
+  } finally {
+    if (voiceDesignRequest === controller) {
+      voiceDesignRequest = undefined;
+      button.disabled = false;
+    }
+  }
+});
+
 function activeRoute() {
   const key = location.hash.slice(1);
   if (key === 'overview-qq') return 'overview';
@@ -945,6 +1027,7 @@ function activeRoute() {
 }
 function navigate() {
   const current = activeRoute();
+  if (current !== 'greetings') closeVoiceDesign();
   for (const name of Object.keys(routes)) $(name).hidden = current !== name;
   for (const link of document.querySelectorAll('[data-route]')) {
     if (link.dataset.route === current) link.setAttribute('aria-current', 'page');
@@ -968,14 +1051,14 @@ function navigate() {
   if (current === 'usage') return void loadUsage();
   if (!state || ['activity', 'ai', 'persona', 'overview', 'companionship'].includes(current)) void refresh();
 }
-async function request(path, method = 'GET', body) {
+async function request(path, method = 'GET', body, controller = new AbortController()) {
   if (macPreview) {
     const bridge = window.webkit?.messageHandlers?.yubanPreview;
     if (!bridge) throw new Error('无法连接离线预览');
     return await bridge.postMessage({ path, method, ...(body !== undefined ? { body } : {}) });
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const voicePreview = path === '/api/voice/design-preview';
+  const timeout = setTimeout(() => controller.abort(), voicePreview ? 95000 : 25000);
   const headers = new Headers();
   const username = accountUsername();
   if (body !== undefined) headers.set('Content-Type', 'application/json');
@@ -984,6 +1067,7 @@ async function request(path, method = 'GET', body) {
     const response = await fetch(path, {
       method,
       headers,
+      ...(voicePreview && { cache: 'no-store', redirect: 'error' }),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
@@ -992,6 +1076,13 @@ async function request(path, method = 'GET', body) {
       throw new Error('登录已过期，请重新登录。');
     }
     if (path === '/api/auth/logout' && response.ok) return;
+    if (voicePreview && response.ok) {
+      const voiceId = response.headers.get('X-Yuban-Voice-Id');
+      if (response.headers.get('Content-Type')?.split(';')[0].trim() !== 'audio/wav' || !voiceId) {
+        throw new Error('试听响应不完整');
+      }
+      return { voiceId, audio: await response.blob() };
+    }
     const result = await response.json().catch(() => null);
     if (!response.ok) {
       const error = new Error(result?.error || '服务暂不可用');
@@ -1005,6 +1096,7 @@ async function request(path, method = 'GET', body) {
 function goToLogin() {
   if (redirectingToLogin) return;
   redirectingToLogin = true;
+  closeVoiceDesign();
   document.body.hidden = true;
   location.replace('/login');
 }
@@ -1260,6 +1352,7 @@ function renderUsage(snapshot, customBase) {
   const providerName = usageProviders.get(current?.provider);
   const currentProvider = typeof MODEL_CATALOG === 'undefined' ? null : MODEL_CATALOG.find((provider) => provider.id === current?.provider);
   setProviderPortal($('balance-provider-portal'), currentProvider, customBase);
+  setProviderRecharge('balance-recharge', currentProvider);
   $('usage-current-model').textContent = model || '未配置模型';
   $('usage-current-provider').textContent = [providerName, current?.configured === false && model ? '模型未就绪' : ''].filter(Boolean).join(' · ');
   const keyStatus = current?.hasApiKey === true ? 'API 密钥已配置' : current?.hasApiKey === false ? 'API 密钥未配置' : 'API 密钥状态未知';
@@ -1452,6 +1545,9 @@ function render(next) {
   $('active-account').textContent = account;
   $('active-account').title = account ? `当前账号：${account}` : '';
   $('logout').hidden = !account;
+  const canDesignVoice = Boolean(account && services.voiceDesignPreview === true && window.isSecureContext);
+  $('voice-design').hidden = !canDesignVoice;
+  if (!canDesignVoice && $('voice-design').open) closeVoiceDesign();
   $('environment').lastChild.textContent = cloud ? '云端控制台' : desktopPreview ? '离线预览' : '本地预览';
   $('sidebar-status').textContent = cloud ? '云端服务' : '控制台';
   $('health-text').textContent = cloud ? '云端服务已响应' : desktopPreview ? '离线模式 · 未连接云端' : '本地服务已响应';
@@ -1549,6 +1645,7 @@ $('logout').addEventListener('click', async (event) => {
   if (button.hidden || button.disabled) return;
   button.disabled = true;
   button.textContent = '正在退出…';
+  closeVoiceDesign();
   try {
     await request('/api/auth/logout', 'POST', {});
     goToLogin();
@@ -1738,6 +1835,7 @@ document.addEventListener('visibilitychange', () => {
   if (route === 'usage') void loadUsage();
 });
 window.addEventListener('pagehide', () => {
+  closeVoiceDesign();
   if (accountUsername()) document.body.hidden = true;
 });
 window.addEventListener('pageshow', (event) => {
