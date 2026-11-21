@@ -1058,7 +1058,7 @@ async function request(path, method = 'GET', body, controller = new AbortControl
     return await bridge.postMessage({ path, method, ...(body !== undefined ? { body } : {}) });
   }
   const voicePreview = path === '/api/voice/design-preview';
-  const timeout = setTimeout(() => controller.abort(), voicePreview ? 95000 : 25000);
+  const timeout = setTimeout(() => controller.abort(), voicePreview ? 240_000 : 25_000);
   const headers = new Headers();
   const username = accountUsername();
   if (body !== undefined) headers.set('Content-Type', 'application/json');

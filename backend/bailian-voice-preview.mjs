@@ -162,7 +162,7 @@ export async function designVoicePreview(input = {}, { fetchImpl = fetch, signal
   const { apiKey, workspaceId, description, previewText } = validateDesignPreview(input);
   const host = workspaceId ? `${workspaceId}.cn-beijing.maas.aliyuncs.com` : 'dashscope.aliyuncs.com';
   const url = new URL(`https://${host}/api/v1/services/audio/tts/customization`);
-  const timeout = AbortSignal.timeout(55_000);
+  const timeout = AbortSignal.timeout(180_000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
     requestSignal.throwIfAborted();

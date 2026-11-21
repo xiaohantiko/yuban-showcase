@@ -231,7 +231,7 @@ test('canceling after request submission or during the body stops once and prese
 test('the provider deadline is applied even when a caller supplies no abort signal', async t => {
   const controller = new AbortController();
   t.mock.method(AbortSignal, 'timeout', ms => {
-    assert.equal(ms, 55_000);
+    assert.equal(ms, 180_000);
     return controller.signal;
   });
   let requests = 0;
@@ -244,4 +244,37 @@ test('the provider deadline is applied even when a caller supplies no abort sign
   } });
   await assert.rejects(result, { status: 504 });
   assert.equal(requests, 1);
+});
+
+test('one maximum-length audition can finish after the old deadline, with one deadline for headers and body', async t => {
+  let tick;
+  t.mock.method(AbortSignal, 'timeout', deadline => {
+    const controller = new AbortController();
+    tick = elapsed => { if (elapsed >= deadline) controller.abort(); };
+    return controller.signal;
+  });
+  const longInput = { ...example, previewText: '春'.repeat(200) };
+  for (const [arrival, expires] of [[179_999, false], [180_000, true]]) {
+    let calls = 0;
+    let canceled = 0;
+    const pending = designVoicePreview(longInput, { fetchImpl: (_url, { signal }) => {
+      calls++;
+      tick(100_000);
+      signal.throwIfAborted();
+      return new Response(new ReadableStream({
+        pull(controller) {
+          tick(arrival);
+          if (!signal.aborted) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ output: output() })));
+            controller.close();
+          }
+        },
+        cancel() { canceled++; },
+      }, { highWaterMark: 0 }), { headers: { 'Content-Type': 'application/json' } });
+    } });
+    if (expires) await assert.rejects(pending, { status: 504 });
+    else assert.deepEqual((await pending).bytes, new Uint8Array(wave()));
+    assert.equal(calls, 1);
+    assert.equal(canceled, Number(expires));
+  }
 });
