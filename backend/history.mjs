@@ -15,13 +15,14 @@ function isMessage(message) {
 
 export function boundStoredHistory(messages) {
   if (!Array.isArray(messages)) return [];
-  return messages.slice(-MAX_STORED_MESSAGES).filter(isMessage).map(({ id, role, text, at, kind, voice, sources, pendingDelivery }) => ({
+  return messages.slice(-MAX_STORED_MESSAGES).filter(isMessage).map(({ id, role, text, at, kind, voice, sources, pendingDelivery, voiceDelivered }) => ({
     ...(typeof id === 'string' ? { id: clip(id, 80) } : {}),
     role, text: clip(text, MAX_STORED_TEXT),
     ...(role === 'assistant' && pendingDelivery === true ? { pendingDelivery: true } : {}),
     ...(Number.isFinite(at) ? { at } : {}),
     ...(kind === 'greeting' || kind === 'search' ? { kind } : {}),
     ...(voice === true ? { voice } : {}),
+    ...(role === 'assistant' && voice === true && typeof voiceDelivered === 'boolean' ? { voiceDelivered } : {}),
     ...(Array.isArray(sources) && sources.length ? {
       sources: sources.slice(0, 5).filter((source) => typeof source?.title === 'string'
         && typeof source.url === 'string' && source.url.length <= 2_048 && /^https?:\/\//i.test(source.url))

@@ -114,7 +114,7 @@
                 <summary>语音回复怎么接入</summary>
                 <p id="setup-provider-voice" aria-live="polite"></p>
                 <a id="setup-provider-voice-docs" class="link guide-link" target="_blank" rel="noreferrer" hidden>查看官方语音文档</a>
-                <p>由部署者按服务商要求在云端配置语音服务和密钥。配置好后，在 QQ 私聊发送「用语音回复：给我讲个故事」，或在「主动问候」里开启「默认语音回复」。</p>
+                <p>到「主动问候 → 聊天回复方式」选择文字或语音。使用官方 DeepSeek 时可按需授权海星语音，也可以使用部署者已配置的语音服务。</p>
               </details>
             </div>
           </details>
@@ -303,7 +303,14 @@
         <div class="setting-row time-zone-row"><label for="chat-time-zone"><strong>对话时区</strong><small>夜聊和主动问候都按这个时区。</small></label><select id="chat-time-zone" name="timeZone"><option value="Asia/Shanghai">北京时间</option></select></div>
         <div class="setting-row"><label for="quiet-enabled"><strong>夜间免打扰</strong><small>这段时间你发消息，她照常回。智能联系会跳过已经过去的话题。</small></label><input type="checkbox" id="quiet-enabled" name="quietEnabled" class="switch-input"></div>
         <div class="setting-row quiet-times"><div class="time-input"><label for="quiet-start">开始</label><input id="quiet-start" name="quietStart" type="time" required></div><span>—</span><div class="time-input"><label for="quiet-end">结束</label><input id="quiet-end" name="quietEnd" type="time" required></div></div>
-        <div class="setting-row"><label for="voice-default"><strong>默认语音回复</strong><small>开启后，支持的闲聊回复优先发 QQ 语音；资料和问候仍发文字。</small></label><input type="checkbox" id="voice-default" name="voiceReplies" class="switch-input"></div>
+        <div class="setting-row time-zone-row">
+          <label for="voice-mode"><strong id="voice-mode-title">聊天回复方式</strong><small id="voice-mode-help"></small><small id="voice-service-status" aria-live="polite">正在读取语音合成状态…</small></label>
+          <select id="voice-mode" name="voiceReplyMode" aria-labelledby="voice-mode-title" aria-describedby="voice-mode-help voice-service-status"><option value="text">默认文字</option><option value="occasionally" id="voice-occasional">偶尔发语音</option><option value="voice">优先发语音</option></select>
+        </div>
+        <div class="setting-row" id="deepseek-voice-consent-row" hidden>
+          <label for="allow-deepseek-voice"><strong id="deepseek-voice-label">授权 DeepSeek 合成海星语音</strong><small id="deepseek-voice-terms">保存授权后，宇伴会用此账号已保存的 DeepSeek 密钥，只把要朗读的文字发给 DeepSeek。语音按字符单独计费。随时取消勾选并保存即可撤销授权。</small></label>
+          <input type="checkbox" class="switch-input" name="useDeepseekVoice" id="allow-deepseek-voice" aria-labelledby="deepseek-voice-label" aria-describedby="deepseek-voice-terms">
+        </div>
         <div class="form-footer"><span id="opted-in">—</span><button class="button primary" type="submit">保存设置</button></div>
       </form>
       <p class="aside-note"><svg><use href="#i-info"/></svg> 随时在 QQ 发「关闭问候」即可停止。QQ 官方机器人需具备单聊唤醒权限，发送频次由平台限制。</p>

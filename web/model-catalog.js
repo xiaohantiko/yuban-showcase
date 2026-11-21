@@ -5,7 +5,7 @@ const MODEL_CATALOG = Object.freeze([
     portal: 'https://platform.deepseek.com/api_keys',
     base: 'https://api.deepseek.com',
     docs: 'https://api-docs.deepseek.com/zh-cn/',
-    voiceNote: 'DeepSeek 已提供海星、暗潮音色。部署者配置独立的 DeepSeek 语音密钥后，可接入 QQ 语音回复。发送能力取决于机器人权限和平台支持。',
+    voiceNote: '使用官方 DeepSeek 聊天接口时，可在「主动问候」中授权用现有密钥合成海星语音，按字符单独计费。也可使用部署者已配置的语音服务。',
     voiceDocs: 'https://api-docs.deepseek.com/zh-cn/guides/tts/',
     models: [
       { name: 'DeepSeek Flash（推荐）', model: 'deepseek-flash', note: '默认用于日常 QQ 聊天。使用 DeepSeek 开放平台的 API Key。' },

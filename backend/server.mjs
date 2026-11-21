@@ -293,7 +293,9 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
           plugins: pluginCapabilities(state.settings, { dsh: dshRelay,
             memoryReady: owner?.transport === 'qq' && thread?.memory?.enabled === true }) },
         search: providers.searchProvider ?? (providers.searchConfigured ? 'configured' : 'none'),
-        voice: providers.voiceProvider ?? (providers.voiceConfigured ? 'remote' : 'browser'),
+        deepseekVoiceAvailable: providers.deepseekVoiceAvailable === true,
+        voice: state.settings.useDeepseekVoice ? (providers.deepseekVoiceAvailable ? 'deepseek' : 'none')
+          : providers.voiceProvider ?? (providers.voiceConfigured ? 'remote' : 'browser'),
         qq: statusOf('qq'), onebot: statusOf('onebot'),
       },
       logs: state.logs,
@@ -305,7 +307,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
     if (!stillAllowed() || stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
     let audio;
     if (message.voice && !proactive) {
-      try { audio = await runtime.providers.audio(message.text); } catch { /* Reply in text if voice generation fails. */ }
+      try { audio = await runtime.providers.audio(message.text, { useDeepseekVoice: state.settings.useDeepseekVoice === true }); } catch { /* Reply in text if voice generation fails. */ }
     }
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
     let ticket;
@@ -325,18 +327,19 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       notice: ticket?.text, isCurrent: async () => stillAllowed() && botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
     }) : await runtime.transports[transport].send(target, { text, audio, proactive });
     if (delivery === null) return false;
+    const receipt = { voice: delivery?.voice === true };
     if (ticket) {
       try {
         // QQ media replies carry only audio. Keep that reply and use the next
         // sequence of this same inbound message for the account notification.
         if (audio && delivery?.voice !== false) {
-          if (!await transportCurrent(runtime, transport) || !await balanceMonitor.isCurrent(ticket) || !sameBinding(owner)) return true;
+          if (!await transportCurrent(runtime, transport) || !await balanceMonitor.isCurrent(ticket) || !sameBinding(owner)) return receipt;
           await runtime.transports[transport].send(target, { text: ticket.text, sequence: 2 });
         }
         await balanceMonitor.confirm(ticket);
       } catch { log('qq', 'balance', 'error', '余额提醒等待下次私聊重试'); }
     }
-    return true;
+    return receipt;
   }
   async function sendBalanceNotice() {
     if (stopped || !botIsEnabled(state.settings) || isQuiet(clock(), state.settings)) return;
@@ -530,7 +533,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
           thread.timeState = turn.timeState;
           if (state.settings.memoryEnabled !== false) thread.memory = turn.memory;
           addMessage(thread, newMessage('user', text, { at: clock(), ...(turn.searching ? { kind: 'search' } : {}) }));
-          addMessage(thread, turn.searching ? { ...message, kind: 'search' } : { ...message, pendingDelivery: true });
+          addMessage(thread, turn.searching ? { ...message, kind: 'search' } : { ...message, pendingDelivery: true, ...(message.voice && { voiceDelivered: false }) });
         }
 
         if (!await transportCurrent(runtime, transport) || !sameBinding(owner)) {
@@ -548,13 +551,18 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
             if (revision !== activationRevision(state.settings)) return;
             message = newMessage('assistant', allowsChainChat(state.settings, parsed.text) ? result?.text || '未能处理插件命令。' : removed);
           }
-          if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true, requiredWeatherGrant })) return;
+          const receipt = await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true, requiredWeatherGrant });
+          if (!receipt) return;
           if (ordinaryReply) {
             thread.confirmedChatFor = thread.lastUserAt;
             const sent = thread.messages.findLast(item => item.id === message.id);
-            if (sent) delete sent.pendingDelivery;
+            if (sent) {
+              delete sent.pendingDelivery;
+              if (sent.voice) sent.voiceDelivered = receipt.voice;
+            }
           }
-          log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : '已发送对话回复');
+          const detail = receipt.voice ? '已发送语音回复' : message.voice ? '语音未送出，已发送文字回复' : '已发送对话回复';
+          log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : detail);
         } catch (err) { log(transport, kind, 'error', transportError(err)); }
         return completion ? { completion, owner, key, thread } : null;
       });
@@ -930,7 +938,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         requireActive();
         const reply = await createReply(providers, state.settings, [], '今天工作很累，想歇一会儿。', { at: clock() });
         log('demo', 'check', 'ok', '内部收发链路测试通过');
-        return send(res, 200, { ok: true, text: reply.text, voiceAvailable: Boolean(providers.voiceAvailable), state: await snapshot(username, endpoints, account) });
+        return send(res, 200, { ok: true, text: reply.text, voiceAvailable: Boolean(state.settings.useDeepseekVoice ? providers.deepseekVoiceAvailable : providers.voiceAvailable), state: await snapshot(username, endpoints, account) });
       }
       return send(res, 404, { error: '找不到这个地址' });
     } catch (error) { return consoleError(res, error); }

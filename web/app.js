@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const routes = { admin: '管理后台', overview: '开始使用', ai: '高级接入', persona: '人设与记忆', companionship: '陪伴插件', greetings: '主动问候', usage: '用量看板', help: '使用说明', activity: '运行记录', feedback: '问题反馈' };
-const fields = { enabled: 'greet-enabled', outreachMode: 'outreach-mode', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
+const fields = { enabled: 'greet-enabled', outreachMode: 'outreach-mode', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplyMode: 'voice-mode', useDeepseekVoice: 'allow-deepseek-voice' };
 const field = (name) => $(fields[name]);
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const ownerTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -19,6 +19,7 @@ const desktopPreview = macPreview || location.origin === 'https://yuban-preview.
 const legacyEndpoints = { qqWebhook: '/api/qq/webhook', aiReply: '/api/ai/reply', gptSchema: '/api/gpt/openapi.json' };
 let state;
 let dirty = false;
+let deepseekVoiceEdited = false;
 let companionDirty = false;
 let companionSaving = false;
 let dshSaving = false;
@@ -1414,6 +1415,12 @@ function renderTimeZone(savedZone) {
   select.value = current;
 }
 function syncGreetingForm() {
+  const voiceHelp = {
+    text: '平时发文字。想听语音时，可以在 QQ 单独提出来。',
+    occasionally: '平时以文字为主。聊到晚安、安慰或好消息时，伙伴偶尔会发一小段语音。',
+    voice: '合适的闲聊优先发语音。你也可以在 QQ 说这条想看文字。',
+  };
+  $('voice-mode-help').textContent = voiceHelp[field('voiceReplyMode').value] + ' 资料查询和主动问候发文字。';
   const manual = field('outreachMode').value === 'manual';
   $('fixed-delay-row').hidden = !manual;
   field('afterMinutes').disabled = !manual;
@@ -1484,17 +1491,29 @@ function render(next) {
   badge('ai-api-status', !aiAvailable ? '此账号未开放' : desktopPreview ? '待连接云端' : aiEnabled ? '已启用' : '尚未启用', aiAvailable && aiEnabled && !desktopPreview ? 'success' : 'neutral');
   showAIAddress(scoped || cloud || aiEnabled ? aiURL : '', aiAvailable);
   badge('search-status', ({ wikipedia: '维基百科', brave: '网页搜索', configured: '已配置' })[services.search] || '待配置', services.search === 'none' ? 'neutral' : 'success');
-  const voice = ({ remote: '已配置', macos: '本机语音' })[services.voice];
-  badge('voice-status', voice || '待配置', voice ? 'success' : 'neutral');
+  const deepseekUnavailable = settings.useDeepseekVoice === true && services.deepseekVoiceAvailable !== true;
+  const voice = !deepseekUnavailable && ({ remote: '云端语音合成已配置', macos: '服务器本机语音合成已配置', deepseek: 'DeepSeek 海星语音已配置' })[services.voice];
+  const deepseekAvailable = services.deepseekVoiceAvailable === true;
+  const deepseekAuthorized = settings.useDeepseekVoice === true;
+  $('deepseek-voice-consent-row').hidden = !deepseekAvailable && !deepseekAuthorized;
+  badge('voice-status', voice || '语音合成待配置', voice ? 'success' : 'neutral');
+  const legacyVoice = !Object.hasOwn(settings, 'voiceReplyMode');
+  $('voice-occasional').disabled = legacyVoice;
+  let voiceStatus = voice ? voice + '。' : '语音合成尚未配置，当前会发文字。';
+  if (!voice && deepseekAvailable) voiceStatus = '当前 DeepSeek 接口支持语音。授权前仍会发文字。';
+  if (deepseekAuthorized && !deepseekAvailable) voiceStatus = '已保留 DeepSeek 语音授权。当前聊天接口不适用，暂时发文字。';
+  $('voice-service-status').textContent = voiceStatus + (legacyVoice ? '升级云端服务后可选「偶尔发语音」。' : '');
   $('quick-greet').setAttribute('aria-checked', String(settings.enabled));
   $('quick-greet').disabled = false;
   $('greet-summary').textContent = settings.enabled ? outreachSummary(settings) : '主动问候已暂停';
   $('opted-in').textContent = `已开启问候的 QQ 好友：${next.stats?.optedIn ?? 0}`;
   if (!dirty) {
+    deepseekVoiceEdited = false;
     for (const name of Object.keys(fields)) {
       const input = field(name);
       if (name === 'timeZone') renderTimeZone(settings.timeZone);
       else if (name === 'outreachMode') input.value = settings.outreachMode || 'manual';
+      else if (name === 'voiceReplyMode') input.value = settings.voiceReplyMode || (settings.voiceReplies ? 'voice' : 'text');
       else if (input.type === 'checkbox') input.checked = settings[name];
       else input.value = settings[name];
     }
@@ -1573,18 +1592,29 @@ $('quick-greet').addEventListener('click', async (event) => {
   catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 });
-$('settings').addEventListener('input', () => { dirty = true; syncGreetingForm(); });
+$('settings').addEventListener('input', (event) => {
+  dirty = true;
+  if (event.target === field('useDeepseekVoice')) deepseekVoiceEdited = true;
+  syncGreetingForm();
+});
 $('settings').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (!state?.settings) return toast('管理台还在连接，请稍后再保存。');
   const button = event.currentTarget.querySelector('button[type="submit"]');
   button.disabled = true;
   const payload = {};
   for (const name of Object.keys(fields)) {
     const input = field(name);
     if (name === 'afterMinutes' && input.disabled) continue;
+    if (name === 'useDeepseekVoice' && (!deepseekVoiceEdited || input.checked === (state.settings.useDeepseekVoice === true)
+      || (input.checked && state.services.deepseekVoiceAvailable !== true))) continue;
+    if (name === 'voiceReplyMode' && !Object.hasOwn(state.settings, name)) {
+      payload.voiceReplies = input.value === 'voice';
+      continue;
+    }
     payload[name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? input.valueAsNumber : input.value;
   }
-  try { const next = await request('/api/settings', 'PATCH', payload); dirty = false; render(next); toast(desktopPreview ? '预览设置已保存在本机' : '问候规则已保存'); }
+  try { const next = await request('/api/settings', 'PATCH', payload); dirty = false; render(next); toast(desktopPreview ? '预览设置已保存在本机' : '问候与回复设置已保存'); }
   catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 });

@@ -136,6 +136,9 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
   const model = env.AI_MODEL?.trim();
   const chatEndpoint = endpoint(env.AI_BASE_URL, 'chat/completions');
   const modelConfigured = Boolean(chatEndpoint && model);
+  const speechURL = new URL('https://api.deepseek.com/v1/tools/tts');
+  const deepseekVoiceAvailable = Boolean(modelConfigured && env.AI_API_KEY?.trim()
+    && chatEndpoint.origin === speechURL.origin && ['/chat/completions', '/v1/chat/completions'].includes(chatEndpoint.pathname));
   const voiceModel = env.VOICE_MODEL?.trim();
   const voiceEndpoint = endpoint(env.VOICE_BASE_URL, 'audio/speech');
   const deepSeekVoice = voiceEndpoint?.origin === 'https://api.deepseek.com'
@@ -272,6 +275,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
     searchConfigured: true,
     searchProvider: braveKey ? 'brave' : 'wikipedia',
     voiceConfigured,
+    deepseekVoiceAvailable,
     voiceAvailable: voiceConfigured || Boolean(localAudio),
     voiceProvider: voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
 
@@ -331,17 +335,23 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       return signals.length || details.length ? { signals, details } : null;
     },
 
-    async audio(text) {
-      const input = text?.trim().slice(0, 600);
-      if (!input) return null;
-      if (!voiceConfigured) return localAudio ? localAudio(input) : null;
-      const response = await fetchImpl(voiceEndpoint, {
+    async audio(text, { useDeepseekVoice = false } = {}) {
+      const input = text?.replace(/[（(](?:轻(?:轻)?(?:地|的)?笑(?:了笑|了一声)?|笑(?:了笑|出声|着说)?|压低声音|小声(?:地)?说)[）)]/gu, '')
+        .replace(/\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu, '').trim();
+      if (!input || input.length > 600) return null;
+      // Account consent never authorizes using a gateway key at a different origin.
+      if (useDeepseekVoice && !deepseekVoiceAvailable) return null;
+      if (!useDeepseekVoice && !voiceConfigured) return localAudio ? localAudio(input) : null;
+      const nativeSpeech = useDeepseekVoice || deepSeekVoice;
+      const target = useDeepseekVoice ? speechURL : voiceEndpoint;
+      const key = useDeepseekVoice ? env.AI_API_KEY : env.VOICE_API_KEY;
+      const response = await fetchImpl(target, {
         method: 'POST',
-        headers: apiHeaders(env.VOICE_API_KEY),
+        headers: apiHeaders(key),
         redirect: 'manual',
         signal: AbortSignal.timeout(16000),
-        body: JSON.stringify(deepSeekVoice
-          ? { text: input, voice_id: voiceName, format: 'wav', filter_markdown: true }
+        body: JSON.stringify(nativeSpeech
+          ? { text: input, voice_id: useDeepseekVoice ? 'stella' : voiceName, format: 'wav', filter_markdown: true }
           : { model: voiceModel, input, voice: voiceName, response_format: 'mp3' }),
       });
       if (!response.ok) {
@@ -350,12 +360,12 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       }
       const type = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() || 'application/octet-stream';
       const format = audioFormats[type];
-      if (!format || (deepSeekVoice && format[1] !== 'wav')) {
+      if (!format || (nativeSpeech && format[1] !== 'wav')) {
         await response.body?.cancel().catch(() => {});
         throw new Error('语音服务没有返回支持的音频格式');
       }
       const [contentType, extension] = format;
-      const limit = deepSeekVoice ? 4_999_999 : 10 * 1024 * 1024;
+      const limit = nativeSpeech ? 4_999_999 : 10 * 1024 * 1024;
       const bytes = await readAudioBytes(response, limit);
       return { bytes, contentType, filename: `yuban-voice.${extension}` };
     },

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { occasionalVoice, requestedVoice, voiceModeFor, voiceRequest } from './voice-replies.mjs';
+export { voiceRequest } from './voice-replies.mjs';
 import { followupMessages } from './followup.mjs';
 import { companionGreeting, companionTurnContext, validGreeting } from './companion.mjs';
 import { boundedChatContext, MAX_STORED_MESSAGES } from './history.mjs';
@@ -8,7 +10,7 @@ import { defaultOutreachMinutes, outreachModeFor } from './outreach.mjs';
 
 export const defaultSettings = Object.freeze({
   enabled: true, outreachMode: 'adaptive', afterMinutes: defaultOutreachMinutes, quietEnabled: true, quietStart: '23:00', quietEnd: '08:00',
-  timeZone: 'Asia/Shanghai', voiceReplies: false,
+  timeZone: 'Asia/Shanghai', voiceReplyMode: 'text', voiceReplies: false, useDeepseekVoice: false,
   companionName: '', companionPersona: '', memoryEnabled: true,
   dshPlugins: Object.freeze([]),
   dshChainManaged: false,
@@ -29,6 +31,9 @@ const validDshPlugins = new Set(dshPluginIDs);
 export function readSettings(current) {
   const settings = { ...defaultSettings, ...current };
   settings.outreachMode = outreachModeFor(current);
+  settings.voiceReplyMode = voiceModeFor(current);
+  settings.voiceReplies = settings.voiceReplyMode === 'voice';
+  settings.useDeepseekVoice = current?.useDeepseekVoice === true;
   delete settings.companionStyle;
   settings.timeZone = validTimeZone(settings.timeZone) ? settings.timeZone : 'Asia/Shanghai';
   settings.dshPlugins = selectedPlugins(settings);
@@ -64,10 +69,16 @@ export function mergeSettings(current, input) {
     if (persona === null || persona.length > 1_000) throw new Error('角色设定需为文本，最多 1000 个字符');
     next.companionPersona = persona;
   }
-  for (const key of ['enabled', 'quietEnabled', 'voiceReplies', 'memoryEnabled']) {
+  for (const key of ['enabled', 'quietEnabled', 'useDeepseekVoice', 'memoryEnabled']) {
     if (!(key in input)) continue;
     if (typeof input[key] !== 'boolean') throw new Error('开关值无效');
     next[key] = input[key];
+  }
+  if ('voiceReplyMode' in input || 'voiceReplies' in input) {
+    if ('voiceReplyMode' in input && !['text', 'occasionally', 'voice'].includes(input.voiceReplyMode)) throw new Error('请选择有效的语音回复方式');
+    if ('voiceReplies' in input && typeof input.voiceReplies !== 'boolean') throw new Error('语音开关值无效');
+    next.voiceReplyMode = voiceModeFor(input);
+    next.voiceReplies = next.voiceReplyMode === 'voice';
   }
   if ('outreachMode' in input) {
     if (input.outreachMode !== 'adaptive' && input.outreachMode !== 'manual') throw new Error('请选择智能联系或固定间隔');
@@ -125,17 +136,17 @@ export function nextGreeting(thread, settings, now = Date.now()) {
 }
 
 export const searchRequest = /^(?:[\s/]*(?:查资料|查一下|帮我查(?:一下)?|搜索|搜一下|帮我搜|search)\s*[:：]?)/i;
-export const voiceRequest = /^(?:请|可以)?(?:用|发)?语音(?:回复|回答)?\s*[:：,，]?\s*/;
 export const commandOn = /^(?:\/|#)?\s*(?:开启|打开|启用)(?:问候|主动找我)$/;
 export const commandOff = /^(?:\/|#)?\s*(?:关闭|停用|取消|停止)(?:问候|主动找我)$/;
 
 export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName, timeContext, weatherContext, story = false } = {}) {
   const { companionName, companionPersona, memoryEnabled = true } = settings;
-  const wantsVoice = voice || settings.voiceReplies || voiceRequest.test(text);
+  const requested = requestedVoice(text);
   const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
   const kind = !weatherContext?.requested && (mode === 'search' || searchRequest.test(input)) ? 'search' : 'chat';
   const query = kind === 'search' ? (input.replace(searchRequest, '').trim() || input) : input;
   let result;
+  let generated = true;
   try {
     result = await providers.reply({
       messages: boundedChatContext(kind === 'search' ? [] : messages, query, { story, at: timeContext ? at : undefined }),
@@ -148,10 +159,18 @@ export async function createReply(providers, settings, messages, text, { mode, v
       memoryContext: memoryEnabled ? memoryContext : undefined,
     });
   } catch {
+    generated = false;
     result = { text: kind === 'search' ? '这次没能连上资料来源，稍后再试试好吗？' : '刚才没能生成回复。你想接着聊时，可以再发一句。' };
   }
   const sources = Array.isArray(result?.sources) ? result.sources.filter((item) => typeof item?.title === 'string' && /^https?:\/\//i.test(item?.url)).slice(0, 5) : [];
-  return newMessage('assistant', result?.text || '怎么啦，想跟我说说吗？', {
+  const reply = typeof result?.text === 'string' && result.text.trim() ? result.text : '怎么啦，想跟我说说吗？';
+  const preference = voiceModeFor(settings);
+  const voiceAvailable = settings.useDeepseekVoice === true ? providers.deepseekVoiceAvailable === true
+    : providers.voiceAvailable === true || providers.voiceConfigured === true;
+  const wantsVoice = requested ?? (voice === true || preference === 'voice' || (preference === 'occasionally' && voiceAvailable
+    && generated && result?.text && occasionalVoice({ messages, input, reply, at, quiet: isQuiet(at, { ...defaultSettings, ...settings }),
+      searching: kind === 'search', weather: Boolean(weatherContext?.requested), story, companionName })));
+  return newMessage('assistant', reply, {
     ...(kind === 'chat' && !wantsVoice && !sources.length && ((result?.text?.length ?? 0) >= 52 || /\n\s*\n/u.test(result?.text ?? '')) ? { kind: 'chat' } : {}),
     at, ...(sources.length ? { sources } : {}), ...(wantsVoice && !sources.length ? { voice: true } : {}),
   });
