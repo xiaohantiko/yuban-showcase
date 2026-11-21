@@ -141,7 +141,7 @@ export const commandOff = /^(?:\/|#)?\s*(?:关闭|停用|取消|停止)(?:问候
 
 export async function createReply(providers, settings, messages, text, { mode, voice, transport, at = Date.now(), memoryContext, ownerName, timeContext, weatherContext, story = false } = {}) {
   const { companionName, companionPersona, memoryEnabled = true } = settings;
-  const requested = requestedVoice(text);
+  const requested = requestedVoice(text, companionName);
   const voiceAvailable = voiceAvailableFor(providers, settings);
   const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
   const kind = !weatherContext?.requested && (mode === 'search' || searchRequest.test(input)) ? 'search' : 'chat';

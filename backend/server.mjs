@@ -319,7 +319,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       try {
         const current = await services();
         voiceRevision = current.voiceRevision;
-        audio = await current.providers.audio(message.text, { useDeepseekVoice: state.settings.useDeepseekVoice === true });
+        audio = await current.providers.audio(message.text, { transport, useDeepseekVoice: state.settings.useDeepseekVoice === true });
       } catch { /* Reply in text if voice generation fails. */ }
     }
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;

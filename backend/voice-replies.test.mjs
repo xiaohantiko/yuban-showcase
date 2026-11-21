@@ -160,3 +160,37 @@ test('a QQ voice request grounds model capabilities and retains the actual quest
   assert.doesNotMatch(otherChannel.calls[0][0].content, /QQ 私聊已接入语音/u);
   assert.equal(otherChannel.reply.text, denial);
 });
+
+
+test('addressed conversational voice requests override a preceding voice turn while quoted and negated requests do not', async () => {
+  const previous = [{ role: 'assistant', text: '挑蓝色那支吧。', voice: true, voiceDelivered: true }];
+  const mixed = { ...settings, voiceReplyMode: 'mixed', companionName: '小禾' };
+  for (const input of ['姐姐，用语音跟我说说竹笛怎么选。', '小禾用语音对我讲个小故事', '请给我用语音念两句诗吧',
+    '可以用语音和我聊聊电影吗？', '哥哥用语音给我说声早安吧', '用语音陪我聊两句']) {
+    assert.equal((await turn(input, { settings: mixed, messages: previous })).voice, true, input);
+  }
+  for (const input of ['先别用语音跟我说，车上有点挤', '可以给我用语音念吗？算了，还是打字就好']) {
+    assert.equal(requestedVoice(input), false, input);
+  }
+  for (const input of ['别人的例句是“姐姐，用语音跟我说说看”，你怎么理解？', '他说：「给我用语音念两句诗！」',
+    '姐姐用语音跟我说过这个典故']) assert.equal(requestedVoice(input), undefined, input);
+});
+
+test('a voice-capable QQ chat keeps substantive words and retries a text-only impersonation', async () => {
+  const { createProviders } = await import('./providers.mjs');
+  async function reply(answers) {
+    const calls = [];
+    const providers = createProviders({ AI_BASE_URL: 'https://api.deepseek.com', AI_MODEL: 'fixture', AI_API_KEY: 'fixture' },
+      { fetchImpl: async () => { calls.push(1); return Response.json({ choices: [{ message: { content: answers[calls.length - 1] } }] }); } });
+    const result = await providers.reply({ messages: [{ role: 'user', text: '你觉得哪个乐器最适合入门？' }], voiceDelivery: 'available' });
+    return { text: result.text, count: calls.length };
+  }
+  const denial = '我现在发不了语音，就打字模仿给你听吧：';
+  const actual = '我选口琴，放在兜里就能带走。';
+  assert.deepEqual(await reply([denial + actual]), { text: actual, count: 1 });
+  assert.deepEqual(await reply([denial, actual]), { text: actual, count: 2 });
+  const quote = '她说：“别急，我只能打字，不能发语音。”我就等她慢慢回。';
+  assert.deepEqual(await reply([quote]), { text: quote, count: 1 });
+  const unrelated = '用文字模拟一段鼓点，也挺好玩。';
+  assert.deepEqual(await reply([unrelated]), { text: unrelated, count: 1 });
+});

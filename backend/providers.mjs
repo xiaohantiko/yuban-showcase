@@ -74,12 +74,80 @@ async function readAudioBytes(response, limit) {
   }
 }
 
-async function synthesizeBailian({ origin, apiKey, voiceId, text, fetchImpl, onUsage }) {
+const speechMarkdown = /\*\*[^*\n]+\*\*|__[^_\n]+__|\[[^\]\n]+\]\([^)\n]+\)|(?:^|\n)\s*(?:#{1,6}\s+|[-*+]\s+|```)|`[^`\n]+`/u;
+function bailianSpeechText(text) {
+  const spoken = text
+    .replace(/([#*0-9])\uFE0F?\u20E3/gu, '$1')
+    .replace(/(?<=[\p{Script=Latin}\p{N}])\p{RGI_Emoji}+(?=[\p{Script=Latin}\p{N}])/gv, ' ')
+    .replace(/\p{RGI_Emoji}+/gv, '')
+    .replace(/([!?！？])\1+/gu, '$1')
+    // QQ text bubbles often use a blank line after punctuation. That mark already
+    // carries the pause; deliberate ellipses, dashes and bare line breaks stay.
+    .replace(/([，。；！？])[\t ]*\r?\n(?:[\t ]*\r?\n)*[\t ]*/gu, '$1')
+    .trim();
+  return /[\p{L}\p{N}]/u.test(spoken) ? spoken : '';
+}
+
+const chatDeliveryInstruction = '用平时和熟人说话的音量，声音清楚、松弛，气息稳稳托住每个短句。字与字顺着意思自然连起来，收尾轻轻落稳。';
+function isMonoChatWave(wav) {
+  return wav.length > 44 && wav.length % 2 === 0 && wav.toString('latin1', 0, 4) === 'RIFF'
+    && wav.toString('latin1', 8, 16) === 'WAVEfmt ' && wav.readUInt32LE(16) === 16
+    && wav.readUInt16LE(20) === 1 && wav.readUInt16LE(22) === 1 && wav.readUInt32LE(24) === 24_000
+    && wav.readUInt32LE(28) === 48_000 && wav.readUInt16LE(32) === 2 && wav.readUInt16LE(34) === 16
+    && wav.toString('latin1', 36, 40) === 'data';
+}
+
+// Only the 44-byte mono PCM layout reaches this helper. The actual synthesized
+// gaps are effectively digital silence. Keep all speech and breath samples.
+function compactChatWave(wav, text) {
+  const frames = (wav.length - 44) / 2;
+  const amplitude = i => Math.abs(wav.readInt16LE(44 + 2 * i));
+  const intentional = /…|\.{3}|。{2}|[—–]|\n|[（(【\[]\s*(?:停顿|停一下|停一停|pause|silence)/iu.test(text);
+  const cuts = [];
+  const splice = i => {
+    // Find two adjoining near-zero samples within 2 ms of the desired boundary.
+    for (let distance = 0; distance <= 48; distance++) {
+      for (const frame of [i - distance, i + distance]) {
+        if (amplitude(frame - 1) <= 2 && amplitude(frame) <= 2) return 44 + 2 * frame;
+      }
+    }
+    return -1;
+  };
+  let start = 0;
+  for (let i = 0; i <= frames; i++) {
+    if (i < frames && amplitude(i) <= 24) continue;
+    const length = i - start;
+    const edge = start === 0 || i === frames;
+    const compress = edge ? length > 180 * 24 && length < frames : !intentional && length > 450 * 24;
+    if (compress) {
+      const keep = (edge ? 150 : 160) * 24;
+      const left = start === 0 ? 44 : splice(start + keep);
+      const right = i === frames ? wav.length : splice(i - keep);
+      if (left >= 44 && right > left) cuts.push([left, right]);
+    }
+    start = i + 1;
+  }
+  if (!cuts.length) return wav.length;
+  let src = 44, dest = 44;
+  for (const [left, right] of cuts) {
+    wav.copyWithin(dest, src, left);
+    dest += left - src;
+    src = right;
+  }
+  wav.copyWithin(dest, src);
+  const size = dest + wav.length - src;
+  wav.writeUInt32LE(size - 8, 4);
+  wav.writeUInt32LE(size - 44, 40);
+  return size;
+}
+
+async function synthesizeBailian({ origin, apiKey, voiceId, text, chatDelivery, fetchImpl, onUsage }) {
   const signal = AbortSignal.timeout(30_000);
   const audioUrl = await meterModelRequest({ onUsage, model: bailianVoiceModel, endpoint: bailianBeijingOrigin() }, async report => {
     const response = await fetchImpl(new URL('/api/v1/services/audio/tts/SpeechSynthesizer', origin), {
       method: 'POST', redirect: 'manual', signal, headers: apiHeaders(apiKey),
-      body: JSON.stringify({ model: bailianVoiceModel, input: { text, voice: voiceId, format: 'wav', sample_rate: 24_000 } }),
+      body: JSON.stringify({ model: bailianVoiceModel, input: { text, voice: voiceId, format: 'wav', sample_rate: 24_000,
+        ...(chatDelivery && { instruction: chatDeliveryInstruction }), ...(chatDelivery && speechMarkdown.test(text) && { enable_markdown_filter: true }) } }),
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
@@ -108,17 +176,14 @@ async function synthesizeBailian({ origin, apiKey, voiceId, text, fetchImpl, onU
   if (declared !== null && !completeObject) throw new Error('百炼语音文件下载不完整');
   // The Beijing synthesizer can leave its streaming sentinels in the finalized
   // 44-byte mono PCM header. Only fix that exact pair on a complete OSS object.
-  if (completeObject && wav.length > 44 && wav.length % 2 === 0
-    && wav.toString('ascii', 0, 4) === 'RIFF' && wav.readUInt32LE(4) === 0x7fffffbf
-    && wav.toString('ascii', 8, 16) === 'WAVEfmt ' && wav.readUInt32LE(16) === 16
-    && wav.readUInt16LE(20) === 1 && wav.readUInt16LE(22) === 1 && wav.readUInt32LE(24) === 24_000
-    && wav.readUInt32LE(28) === 48_000 && wav.readUInt16LE(32) === 2 && wav.readUInt16LE(34) === 16
-    && wav.toString('ascii', 36, 40) === 'data' && wav.readUInt32LE(40) === 0x7fffff9b) {
+  const mono = isMonoChatWave(wav);
+  if (completeObject && mono && wav.readUInt32LE(4) === 0x7fffffbf && wav.readUInt32LE(40) === 0x7fffff9b) {
     wav.writeUInt32LE(wav.length - 8, 4);
     wav.writeUInt32LE(wav.length - 44, 40);
   }
   if (!validWave(wav)) throw new Error('百炼返回的语音文件无效');
-  return { bytes, contentType: 'audio/wav', filename: 'yuban-voice.wav' };
+  const size = chatDelivery && mono && wav.readUInt32LE(40) === wav.length - 44 ? compactChatWave(wav, text) : wav.length;
+  return { bytes: bytes.subarray(0, size), contentType: 'audio/wav', filename: 'yuban-voice.wav' };
 }
 
 function isHttpLink(value) {
@@ -129,12 +194,17 @@ function isHttpLink(value) {
   }
 }
 
-const voiceRefusal = /^(?:我(?:这边)?|这边)?(?:现在|目前|暂时)?(?:还|也|真的)?(?:发(?:不了|不出)语音|录不了语音|(?:无法|不能|没法|没办法|不会)(?:直接|给你)?(?:发(?:送)?|录(?:制)?|用)(?:一条|一段)?语音|只(?:能|可以)(?:给你|用)?(?:打字|文字)|语音(?:暂时)?(?:发不了|发不出|不能发))/u;
+const voiceRefusal = /^(?:可惜|不过|但是|可是|只是)?(?:我(?:这边)?|这边)?(?:现在|目前|暂时)?(?:还|也|真的)?(?:发(?:不了|不出)(?:真正的?)?语音|录不了语音|(?:无法|不能|没法|没办法|不会)(?:直接|真的?|给你)?(?:发(?:送)?|录(?:制)?|用)(?:一条|一段)?语音|只(?:能|可以)(?:给你|用)?(?:打字|文字)|语音(?:暂时)?(?:发不了|发不出|不能发))/u;
+const typedImitation = /^(?:(?:那|不过|但是)?我)?(?:就|先|只好|只能|可以|还是)?(?:给你)?(?:用)?(?:打字|文字)(?:来|给你)?(?:模仿|模拟|代替|假装|还原)/u;
 const apologyOnly = /^(?:抱歉|不好意思|对不起|作为(?:一个)?AI)[呀啊，,。！!\s]*$/iu;
-function spokenAnswer(text) {
-  const clauses = text.split(/(?<=[，,。！？!?；;\n])/u);
-  if (!clauses.some(part => voiceRefusal.test(part.trim()))) return text.trim();
-  return clauses.filter(part => !voiceRefusal.test(part.trim()) && !apologyOnly.test(part.trim())).join('').trim();
+function spokenAnswer(text, requested) {
+  // Keep quoted dialogue in one piece, so an ordinary anecdote can describe
+  // someone else's recording problem without changing the speaker's words.
+  const clauses = text.match(/(?:“[^”]*(?:”|$)|「[^」]*(?:」|$)|『[^』]*(?:』|$)|‘[^’]*(?:’|$)|"[^"]*(?:"|$)|[^“「『‘"，,。！？!?；;：:\n])+[，,。！？!?；;：:\n]*|[，,。！？!?；;：:\n]+/gu) ?? [];
+  const denied = clauses.some(part => voiceRefusal.test(part.trim()));
+  const imitation = part => typedImitation.test(part) && (denied || requested || /声音|语音/u.test(part));
+  if (!denied && !clauses.some(part => imitation(part.trim()))) return text.trim();
+  return clauses.filter(part => !voiceRefusal.test(part.trim()) && !imitation(part.trim()) && !apologyOnly.test(part.trim())).join('').trim();
 }
 
 function plainExcerpt(value) {
@@ -363,13 +433,13 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
         const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
           turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, weatherContext, sourceMessages: selected, greetingOnly, voiceDelivery });
         let text = await complete(system, history);
-        if (voiceDelivery === 'requested') {
-          text = spokenAnswer(text);
+        if (voiceDelivery === 'requested' || voiceDelivery === 'available') {
+          text = spokenAnswer(text, voiceDelivery === 'requested');
           if (!text) {
             // Retry only a pure capability refusal. Keep substantive parts of a
             // first answer so answering a format request normally costs one call.
             const retry = await complete(system + '\n直接回答对方的问题，说一句自然的台词即可。', history).catch(() => '');
-            text = spokenAnswer(retry) || (/晚安|睡觉/u.test(input) ? '晚安呀，睡个好觉。' : '你来啦，正想跟你说句话呢。');
+            text = spokenAnswer(retry, voiceDelivery === 'requested') || (/晚安|睡觉/u.test(input) ? '晚安呀，睡个好觉。' : '你来啦，正想跟你说句话呢。');
           }
         }
         if (greetingOnly && greetingAssumesPast.test(text)) {
@@ -405,14 +475,17 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       return signals.length || details.length ? { signals, details } : null;
     },
 
-    async audio(text, { useDeepseekVoice = false } = {}) {
-      const input = text?.replace(/[（(](?:轻(?:轻)?(?:地|的)?笑(?:了笑|了一声)?|笑(?:了笑|出声|着说)?|压低声音|小声(?:地)?说)[）)]/gu, '')
-        .replace(/\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu, '').trim();
+    async audio(text, { useDeepseekVoice = false, transport } = {}) {
+      const words = text?.replace(/[（(](?:轻(?:轻)?(?:地|的)?笑(?:了笑|了一声)?|笑(?:了笑|出声|着说)?|压低声音|小声(?:地)?说)[）)]/gu, '');
+      if (!words) return null;
+      const chatDelivery = bailianVoiceSelected && transport === 'qq';
+      const input = chatDelivery ? bailianSpeechText(words)
+        : words.replace(/\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu, '').trim();
       if (!input || input.length > 600) return null;
       if (bailianVoiceSelected) {
         if (!bailianVoiceAvailable) return null;
         return synthesizeBailian({ origin: bailianOrigin, apiKey: env.BAILIAN_VOICE_API_KEY, voiceId: env.BAILIAN_VOICE_ID,
-          text: input, fetchImpl, onUsage });
+          text: input, chatDelivery, fetchImpl, onUsage });
       }
       // Account consent never authorizes using a gateway key at a different origin.
       if (useDeepseekVoice && !deepseekVoiceAvailable) return null;

@@ -8,13 +8,20 @@ export const voiceRequest = /^(?:(?:请你?|可以|能不能|麻烦你?)\s*)?(?:
 const prefersText = /(?:别|不要|不用|先别|暂时别|不想|不方便|没法|不能)(?:再|给我|用|发|听|你的?|收|放|播|播放){0,4}语音|(?:只|直接|请|麻烦|还是|改用|用|发)(?:发|用)?文字(?:回复|回答|说|吧|就行|就好)?|(?:打字|文字)(?:回复|回答|说|就好|即可|就行|给我|发给我|发我)|能打字吗/u;
 const asksToHear = /^(?:(?:我(?:就)?)?(?:想|好想|想要)听(?:听|一下)?(?:你(?:的)?(?:声音|语音)|你(?:亲口|用语音)(?:跟我|和我|给我)?说)|(?:你)?(?:能不能|可不可以|可以|能|请|麻烦)?(?:给我|帮我)?(?:发(?:一?[个条段])?语音|用语音(?:回复|回答|说|讲|念)))/u;
 const formatQuestion = /^(?:(?:你)?(?:可以|能不能|可不可以|方便|能)(?:用)?语音|(?:能不能|可以|给我)?来(?:一?[条段个])语音)(?:吗|么|呀|吧|啊)?$/u;
-export function requestedVoice(text) {
-  const preference = text.replace(/(?:别|不要|不用|不想)(?:再|用|发|看)?(?:文字|打字)(?:回复)?/gu, '');
+// Commands quoted as examples or dialogue belong to their speaker. Direct
+// requests may put an addressee on either side of “用语音”.
+const quotedWords = /“[^”]*(?:”|$)|「[^」]*(?:」|$)|『[^』]*(?:』|$)|‘[^’]*(?:’|$)|"[^"]*(?:"|$)/gu;
+const spokenToMe = /^(?:我(?:想|想让|想请)你|(?:请|麻烦)你?|你)?(?:可不可以|能不能|可以|能)?(?:给我|帮我)?用语音(?:来)?(?:跟我|和我|对我|给我|陪我)?(?:说|聊|讲|念|读|道)(?!了|过|的(?:话|那|这))/u;
+const familyAddress = /^(?:姐姐|哥哥|妹妹|弟弟|亲爱的|宝贝)[啊呀]?\s*/u;
+export function requestedVoice(text, companionName = '') {
+  const direct = text.replace(quotedWords, ' ');
+  const preference = direct.replace(/(?:别|不要|不用|不想)(?:再|用|发|看)?(?:文字|打字)(?:回复)?/gu, '');
   if (prefersText.test(preference) || /(?:不方便|没法)听[。！!，,\s]*$/u.test(preference)) return false;
-  if (narratedQuote.test(text)) return undefined;
-  if (text.split(/[，,。！？!?；;\n]/u).some(part => {
-    const phrase = part.trim();
-    return voiceRequest.test(phrase) || asksToHear.test(phrase) || formatQuestion.test(phrase);
+  if (narratedQuote.test(direct)) return undefined;
+  if (direct.split(/[，,。！？!?；;\n]/u).some(part => {
+    let phrase = part.trim().replace(familyAddress, '');
+    if (companionName && phrase.startsWith(companionName)) phrase = phrase.slice(companionName.length).trimStart();
+    return spokenToMe.test(phrase) || voiceRequest.test(phrase) || asksToHear.test(phrase) || formatQuestion.test(phrase);
   })) return true;
   return undefined;
 }
