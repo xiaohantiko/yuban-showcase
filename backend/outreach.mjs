@@ -2,6 +2,14 @@ import { createHash } from 'node:crypto';
 import { botIsEnabled } from './plugin-activation.mjs';
 
 export const outreachRoute = '/api/plugins/outreach';
+export const defaultOutreachMinutes = 360;
+
+export function outreachModeFor(settings) {
+  if (settings?.outreachMode === 'adaptive' || settings?.outreachMode === 'manual') return settings.outreachMode;
+  const minutes = settings?.afterMinutes;
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= 10080 && minutes !== defaultOutreachMinutes
+    ? 'manual' : 'adaptive';
+}
 
 export function outreachStatus(owner, supported, optedIn, settings) {
   // Bind a console confirmation to this pairing without exposing its QQ identifier.
@@ -9,7 +17,7 @@ export function outreachStatus(owner, supported, optedIn, settings) {
     ? createHash('sha256').update(JSON.stringify(['outreach', owner.scope, owner.id, owner.boundAt])).digest('hex') : null;
   const { afterMinutes, quietEnabled, quietStart, quietEnd, timeZone } = settings;
   return { enabled: Boolean(binding && optedIn), available: Boolean(binding), paused: !settings.enabled || !botIsEnabled(settings),
-    binding, afterMinutes, quietEnabled, quietStart, quietEnd, timeZone };
+    binding, outreachMode: outreachModeFor(settings), afterMinutes, quietEnabled, quietStart, quietEnd, timeZone };
 }
 
 export function validateOutreach(data, status) {

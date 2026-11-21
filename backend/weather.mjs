@@ -154,9 +154,9 @@ export function createWeather({ fetchImpl = (...args) => fetch(...args), clock =
     try { return currentForecast(await work, clock()); }
     finally { if (pending.get(key) === work) pending.delete(key); }
   }
-  return async function context(settings, owner, text, { proactive = false, providerAvailable = false } = {}) {
+  return async function context(settings, owner, text, { proactive = false, topicOnly = false, providerAvailable = false } = {}) {
     const interest = weatherInterest(text, settings?.companionName);
-    if (!interest && (!proactive || outdoorActivity.test(text) || /天气|气温|几度|多少度|带伞/u.test(text))) return null;
+    if (!interest && (!proactive || topicOnly || outdoorActivity.test(text) || /天气|气温|几度|多少度|带伞/u.test(text))) return null;
     const grant = weatherGrantFor(settings, owner);
     const status = !providerAvailable ? 'unavailable' : !grant ? 'off' : grant.updatedAt + DAY <= clock() ? 'expired' : null;
     if (status) return interest === 'question' && !proactive ? { status, requested: true } : null;
@@ -170,14 +170,80 @@ export function createWeather({ fetchImpl = (...args) => fetch(...args), clock =
 export function weatherGuidance(weather) {
   if (weather?.status !== 'current') return '缺少本轮本地天气数据时，不猜测对方身边的天气、气温或未来预报。可以回应对方自己描述的天气。';
   const facts = { temperatureC: weather.temperature, condition: weather.condition };
-  return '天气插件提供最后一次授权的大致地区、当前小时的预报：' + JSON.stringify(facts)
-    + '。回答当地天气时可说「你那边预报大概……」。气温用摄氏度；空白天气情况表示未知。不能推断具体位置、用户人在室外、窗外实况或其他城市和时段。对方谈到出门时，合适才顺带关心一句；不要逢聊必报，也别暗示在监控位置。';
+  return '这是当前小时的预报，供你回答这条消息：' + JSON.stringify(facts)
+    + (weather.requested ? '。这次已经查到了，以这一条为准。用熟人聊天的口气回答对方问的那件事。问几度就说几度，问带不带伞就先回答伞；气温可以写成“一度”或“1度”。' : '')
+    + ' 直接从答案说起。别念插件、位置授权、地区、数据来源或天气栏目，也别用“按刚才那份预报”开场。只问温度时一句就够；对方提到出门或问穿什么，才顺口接穿衣建议。未知的天气、风力、昼夜温差别补，也不要说自己看见了对方那里的实况。';
 }
 
-export function weatherAnswer(weather) {
+const digits = '零一二三四五六七八九';
+function spokenDegrees(value) {
+  if (/^\d/u.test(value)) return Number(value);
+  const [tens, ones] = value.replace(/两/gu, '二').split('十');
+  if (ones === undefined) return tens.length === 1 ? digits.indexOf(tens) : NaN;
+  return (tens === '' ? 1 : digits.indexOf(tens)) * 10 + (ones === '' ? 0 : digits.indexOf(ones));
+}
+
+// Remove a bulletin-style preface without rewriting the companion's actual answer.
+export function weatherChatText(text) {
+  return text.trim().replace(/^(?:(?:按(?:照)?|根据)(?:(?:我)?刚(?:才|刚)(?:查到|看到)?的?|最新的?|目前的?|这份|那份|这次的?|当地的?|你那边的?|天气){0,5}(?:天气)?预报(?:来看|来说|显示)?|(?:当地|最新|这份|那份)?(?:天气)?预报(?:上说|显示))[，,:：、]\s*/u, '')
+    .replace(/(\d)\s+(?=℃|度)/gu, '$1').replace(/(?<![A-Za-z])([大约概近才有])\s+(?=[-−+]?\d)/gu, '$1');
+}
+
+// Keep a conversational answer, including spoken numerals, if it matches this turn's forecast.
+export function reportsCurrentWeather(text, weather, question = '') {
+  if (typeof text !== 'string' || weather?.status !== 'current') return false;
+  const readings = [...text.matchAll(/(零下|负|−|[-+])?\s*(\d+(?:\.\d+)?|[零一二两三四五六七八九十]+)\s*(?:℃|°\s*C|摄氏度|度)/giu)];
+  const asksAboutRain = /伞|下雨|有雨/u.test(question) && !/几度|多少度|气温|温度/u.test(question);
+  if (!readings.length && !(asksAboutRain && weather.condition && /雨|伞|雪|雷/u.test(text))) return false;
+  if (readings.some(([, sign, value]) =>
+    spokenDegrees(value) * (['零下', '负', '−', '-'].includes(sign) ? -1 : 1) !== weather.temperature)) return false;
+  if (/授权|共享的?位置|分享的?(?:地区|区域|位置)|所在(?:地区|区域)|当前时段|这个时段预报|数据显示|天气插件|无法(?:查|获取|读取)|看不到.{0,8}(?:天气|气温)|没法.{0,6}查/u.test(text)) return false;
+  const cond = weather.condition || '';
+  if (asksAboutRain && /雨|雪|雷/u.test(cond)
+    && /(?:不用|不必|不需要|可以不)(?:带|拿)?(?:雨)?伞|(?:雨)?伞.{0,5}(?:用不上|不用带|留家里)/u.test(text)) return false;
+  const claims = text.replace(/雨伞|雨衣/gu, '');
+  for (const word of ['雨', '雪', '雷', '雾', '晴', '阴', '多云']) {
+    const denied = new RegExp('(?:不会|不用担心|没有|没见|没|不)(?:有|下|打|起|是|见)?' + word, 'gu');
+    if (cond.includes(word) && denied.test(claims)) return false;
+    if (!cond.includes(word) && claims.replace(denied, '').includes(word)) return false;
+  }
+  return true;
+}
+
+const skyPhrase = {
+  '晴': '天倒是晴的', '大致晴朗': '天还算晴', '局部多云': '天上有些云', '阴': '天有点阴',
+  '有雾': '有点雾', '有雨': '可能会下雨', '有较强降雨': '雨可能还挺大', '雨夹雪': '可能有雨夹雪',
+  '有降雪': '可能会下雪', '有雷暴可能': '可能会打雷',
+};
+
+export function weatherAnswer(weather, question = '') {
   if (!weather?.requested) return null;
-  if (weather.status === 'off') return '我还看不到你那边的天气。在宇伴的「当地天气」里分享一次大致位置，我就能帮你看啦。';
-  if (weather.status === 'expired') return '上次分享的位置已经过期了。你可以在宇伴的「当地天气」里更新一下，我再帮你看。';
-  if (weather.status !== 'current') return '我这会儿没查到你那边的天气，等会儿再帮你看看？';
-  return `你上次分享的地区，这个时段预报大约 ${weather.temperature}℃${weather.condition ? '，' + weather.condition : ''}。`;
+  if (weather.status === 'off') return '我还看不到你那边的天气。想让我帮你看的话，在宇伴里点一下「当地天气」就好。';
+  if (weather.status === 'expired') return '我这里看不到你那边最新的天气了。方便的话，在宇伴的「当地天气」里再分享一次就好。';
+  if (weather.status !== 'current') return '我刚看了一眼，没查到你那边现在几度。';
+  const { temperature, condition } = weather;
+  const temp = temperature < 0 ? '零下' + Math.abs(temperature) + '度' : temperature + '度';
+  const sky = skyPhrase[condition];
+  if (/下雨|有雨/u.test(question) && !/伞/u.test(question)) {
+    if (!condition) return `我这儿只看到气温，大概${temp}。下不下雨还说不准。`;
+    if (/雨|雷/u.test(condition)) return `${sky}，你那边现在大概${temp}。`;
+    return `看起来这会儿没雨，${sky}。现在大概${temp}。`;
+  }
+  if (/伞/u.test(question)) {
+    if (/雨|雪|雷/u.test(condition)) return `带把伞吧，${sky}。你那边现在大概${temp}。`;
+    if (!condition) return `我只查到现在大概${temp}，会不会下雨还说不准。`;
+    return `这会儿看着不用带伞，${sky}。现在大概${temp}。`;
+  }
+  if (/外套|穿什么/u.test(question)) {
+    if (temperature <= 12) return `外套穿上吧，你那边${temp}左右，挺冷的。`;
+    if (temperature >= 26) return `你那边都有${temp}了，穿轻薄点儿就行。`;
+    return `大概${temp}。怕凉的话，带件薄外套就好。`;
+  }
+  if (temperature <= 7) {
+    if (/多少度|几度|冷不冷|冷吗|多冷/u.test(question)) return temperature < 0 ? `都零下${Math.abs(temperature)}度了，怪冷的。` : `你那边才${temp}，怪冷的。`;
+    if (condition === '晴' || condition === '大致晴朗') return `晴是晴，可你那儿也就${temp}呀。`;
+    return `你那边${temp}左右，挺冷的${sky ? '，' + sky : ''}。`;
+  }
+  if (temperature >= 30) return `你那边都${temp}了，挺热的${sky ? '，' + sky : ''}。`;
+  return `你那边现在大概${temp}${sky ? '，' + sky : ''}。`;
 }

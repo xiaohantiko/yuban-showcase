@@ -1,3 +1,4 @@
+import { confirmedHistory, dueGreeting } from './greeting-schedule.mjs';
 import { createWeather, setWeatherGrant, visibleSettings, weatherGrantFor, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
 import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
@@ -9,7 +10,7 @@ import { join, resolve } from 'node:path';
 import { createProviders } from './providers-local.mjs';
 import { createQQAdapter } from './qq.mjs';
 import { createOneBotAdapter } from './onebot.mjs';
-import { addMessage, commandOff, commandOn, createGreeting, createReply, isQuiet, mergeSettings, newMessage, newThread, nextGreeting, renderForTransport, transportError } from './logic.mjs';
+import { addMessage, commandOff, commandOn, createGreeting, createReply, isQuiet, mergeSettings, newMessage, newThread, renderForTransport, transportError } from './logic.mjs';
 import { openState, ownerChannelKey as channelKey } from './state.mjs';
 import { createDshRelay, isDshCommand } from './dsh.mjs';
 import { configuredGptToolToken, createGptOpenAPI, gptChainAboutRoute, gptSchemaRoute, handleGptChainAbout, hasGptToolBearer } from './gpt-actions.mjs';
@@ -299,7 +300,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
     };
   }
   function markActivity(thread) { thread.lastUserAt = Math.max(clock(), (thread.lastUserAt ?? 0) + 1); }
-  async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false, requiredWeatherGrant } = {}) {
+  async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false, requiredWeatherGrant, followupCurrent } = {}) {
     const stillAllowed = () => !requiredWeatherGrant || weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock());
     if (!stillAllowed() || stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
     let audio;
@@ -318,7 +319,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
       const thread = state.channels[channelKey(owner)];
       if (!thread?.optedIn || thread.storyTurn || !state.settings.enabled || isQuiet(clock(), state.settings)) return false;
     }
-    if (!stillAllowed()) return false;
+    if (!stillAllowed() || (followupCurrent && !followupCurrent())) return false;
     const text = renderForTransport(message);
     const delivery = transport === 'qq' ? await deliverReply({ adapter: runtime.transports.qq, target, message, text, audio, proactive,
       notice: ticket?.text, isCurrent: async () => stillAllowed() && botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
@@ -465,6 +466,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         const memoryCommand = !parsed[STORY_FLUSH] && handleMemoryCommand(thread.memory, text, memoryOptions);
         const pluginCommand = !parsed[STORY_FLUSH] && isDshCommand(parsed.text);
         let message;
+        let ordinaryReply = false;
         let requiredWeatherGrant;
         let completion;
         if (pluginCommand) {
@@ -522,11 +524,13 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
             return;
           }
           message = turn.reply;
+          ordinaryReply = !turn.searching;
+          thread.confirmedChatFor = 0;
           completion = turn.completion;
           thread.timeState = turn.timeState;
           if (state.settings.memoryEnabled !== false) thread.memory = turn.memory;
           addMessage(thread, newMessage('user', text, { at: clock(), ...(turn.searching ? { kind: 'search' } : {}) }));
-          addMessage(thread, turn.searching ? { ...message, kind: 'search' } : message);
+          addMessage(thread, turn.searching ? { ...message, kind: 'search' } : { ...message, pendingDelivery: true });
         }
 
         if (!await transportCurrent(runtime, transport) || !sameBinding(owner)) {
@@ -545,6 +549,11 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
             message = newMessage('assistant', allowsChainChat(state.settings, parsed.text) ? result?.text || '未能处理插件命令。' : removed);
           }
           if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true, requiredWeatherGrant })) return;
+          if (ordinaryReply) {
+            thread.confirmedChatFor = thread.lastUserAt;
+            const sent = thread.messages.findLast(item => item.id === message.id);
+            if (sent) delete sent.pendingDelivery;
+          }
           log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : '已发送对话回复');
         } catch (err) { log(transport, kind, 'error', transportError(err)); }
         return completion ? { completion, owner, key, thread } : null;
@@ -571,7 +580,8 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
     const candidate = state.owner;
     const key = channelKey(candidate);
     const thread = key ? state.channels[key] : null;
-    if (!thread?.optedIn || thread.storyTurn || now - thread.lastUserAt >= 30 * DAY || nextGreeting(thread, settings, now) !== now) return;
+    const plan = dueGreeting(thread, settings, now);
+    if (!plan) return;
     const target = { type: 'c2c', id: candidate.id };
     const lock = lockKey(candidate.transport, candidate.scope, target);
     if (locks.has(lock) || greetingInFlight.has(key)) return;
@@ -581,30 +591,32 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
     if (!owner || !runtime.transports[owner.transport].capabilities?.proactive) return;
     const time = clock();
     if (!sameBinding(candidate) || state.channels[key] !== thread || state.settings !== settings
-      || locks.has(lock) || greetingInFlight.has(key) || !thread.optedIn || time - thread.lastUserAt >= 30 * DAY
-      || nextGreeting(thread, settings, time) !== time) return;
+      || locks.has(lock) || greetingInFlight.has(key) || dueGreeting(thread, settings, time)?.stage !== plan.stage) return;
     const activity = thread.lastUserAt;
     greetingInFlight.add(key);
     try {
       // Let new private messages run while the model writes a greeting; recheck the idle period before sending.
-      const weatherContext = await weather(settings, owner, thread.messages.findLast(m => m.role === 'user')?.text, { providerAvailable, proactive: true });
+      const weatherContext = await weather(settings, owner, thread.messages.findLast(m => m.role === 'user')?.text, { providerAvailable, proactive: true, topicOnly: plan.reason !== 'manual' });
       const requiredWeatherGrant = weatherContext?.status === 'current' ? weatherGrantFor(settings, owner) : null;
       if (!sameBinding(owner) || state.settings !== settings || (requiredWeatherGrant && !weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock()))) return;
-      const message = await createGreeting(runtime.providers, settings, thread.messages.slice(), {
-        weatherContext,
+      const message = await createGreeting(runtime.providers, settings, confirmedHistory(thread), {
+        weatherContext, ...(plan.reason !== 'manual' && { followupPlan: plan }),
         at: time, idleMinutes: Math.floor((time - activity) / 60_000), ownerName: owner.name,
         memoryContext: memoryContextFor(thread.memory, { allowed: settings.memoryEnabled !== false, privateChat: true, includeNotes: false }),
       });
-      await withThread(lock, async () => {
+      const sending = withThread(lock, async () => {
         if (!await transportCurrent(runtime, owner.transport) || !sameBinding(owner) || state.owner.name !== owner.name
           || state.channels[key] !== thread || state.settings !== settings || !thread.optedIn || thread.storyTurn) return;
         const after = clock();
-        if (thread.lastUserAt !== activity || after - activity >= 30 * DAY || nextGreeting(thread, settings, after) !== after) return;
+        if (thread.lastUserAt !== activity || dueGreeting(thread, settings, after)?.stage !== plan.stage) return;
         // A timed-out delivery may have succeeded remotely. Do not retry it automatically.
         thread.attemptedFor = activity;
+        if (plan.reason !== 'manual') thread.followup = { anchor: activity, stage: plan.stage, at: after, delivered: false };
         save();
+        const followupCurrent = () => locks.get(lock) === sending && state.settings === settings && state.channels[key] === thread
+          && clock() < plan.expiresAt && !isQuiet(clock(), settings);
         try {
-          if (!await push(runtime, owner.transport, target, message, { proactive: true, owner, requiredWeatherGrant })) return;
+          if (!await push(runtime, owner.transport, target, message, { proactive: true, owner, requiredWeatherGrant, followupCurrent })) return;
           log(owner.transport, 'greeting', 'ok', '已发送主动问候');
         } catch (err) {
           log(owner.transport, 'greeting', 'error', transportError(err));
@@ -612,9 +624,11 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
         }
         if (sameBinding(owner)) {
           addMessage(thread, message);
+          if (plan.reason !== 'manual') thread.followup.delivered = true;
           save();
         }
       });
+      await sending;
     } finally { greetingInFlight.delete(key); }
   }
   async function tickStories() {

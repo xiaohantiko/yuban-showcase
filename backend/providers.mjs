@@ -1,5 +1,5 @@
 import { groundedReply } from './grounded-reply.mjs';
-import { weatherAnswer } from './weather.mjs';
+import { reportsCurrentWeather, weatherAnswer, weatherChatText } from './weather.mjs';
 import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, isBareGreeting, validGreeting } from './companion.mjs';
 import { chatCompletionBody } from './model-request.mjs';
 import { personalityTraits, validatePersonalityObservation } from './personality.mjs';
@@ -277,7 +277,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
 
     async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, weatherContext, story = false, strict = false }) {
       const input = messages.findLast((message) => message.role === 'user')?.text?.trim() ?? '';
-      const localWeatherAnswer = !strict && weatherAnswer(weatherContext);
+      const localWeatherAnswer = !strict && weatherAnswer(weatherContext, input);
       if (localWeatherAnswer && (!modelConfigured || weatherContext.status !== 'current')) return { text: localWeatherAnswer };
       const lookup = localWeatherAnswer ? null : lookupText(input);
       if (mode === 'search' || (!strict && lookup !== null)) return research(lookup ?? input, strict);
@@ -301,8 +301,13 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
         if (greetingOnly && greetingAssumesPast.test(text)) {
           return { text: demoCompanionReply(messages, displayName, ownerName, timeContext) };
         }
-        return { text: strict ? text : groundedReply(text, selected, { memoryContext: applicableMemory, timeContext,
-          ...(greetingOnly ? { fallback: () => demoCompanionReply(messages, displayName, ownerName, timeContext) } : {}) }) };
+        const reply = strict ? text : groundedReply(text, selected, { memoryContext: applicableMemory, timeContext,
+          ...(greetingOnly ? { fallback: () => demoCompanionReply(messages, displayName, ownerName, timeContext) } : {}) });
+        if (localWeatherAnswer) {
+          const conversational = weatherChatText(reply);
+          return { text: reportsCurrentWeather(conversational, weatherContext, input) ? conversational : localWeatherAnswer };
+        }
+        return { text: reply };
       } catch (error) {
         if (strict) throw error;
         if (localWeatherAnswer) return { text: localWeatherAnswer };
@@ -355,8 +360,8 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       return { bytes, contentType, filename: `yuban-voice.${extension}` };
     },
 
-    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes, timeContext, weatherContext } = {}) {
-      const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext, weatherContext };
+    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes, timeContext, weatherContext, followupPlan } = {}) {
+      const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext, weatherContext, followupPlan };
       if (modelConfigured) {
         const observations = companionMemoryMessage({ traits: memoryContext?.traits, personality: memoryContext?.personality });
         const selected = selectChatHistory(messages, 6, true);

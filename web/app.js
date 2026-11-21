@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const routes = { admin: '管理后台', overview: '开始使用', ai: '高级接入', persona: '人设与记忆', companionship: '陪伴插件', greetings: '主动问候', usage: '用量看板', help: '使用说明', activity: '运行记录', feedback: '问题反馈' };
-const fields = { enabled: 'greet-enabled', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
+const fields = { enabled: 'greet-enabled', outreachMode: 'outreach-mode', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
 const field = (name) => $(fields[name]);
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const ownerTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -841,7 +841,7 @@ function renderCarePlugins() {
   $('outreach-toggle').disabled = careBusy || desktopPreview || !outreach?.binding || (!outreach.enabled && !outreach.available);
   $('outreach-note').textContent = !outreach || desktopPreview ? '连接支持陪伴插件的云端后可用。'
     : !outreach.available ? '先完成 QQ 绑定并连接支持主动消息的机器人。'
-    : (outreach.paused ? '主动问候目前暂停。' : '') + '静默 ' + delayLabel(outreach.afterMinutes) + ' 后，每段沉默最多一条。'
+    : (outreach.paused ? '主动问候目前暂停。' : '') + outreachSummary(outreach)
       + (outreach.quietEnabled ? '免打扰 ' + outreach.quietStart + ' 至 ' + outreach.quietEnd + '。' : '');
 }
 
@@ -854,7 +854,7 @@ function openCareConsent(kind) {
   const messages = {
     weather: ['授权当地天气', '设备会先将位置取整到 0.1°。宇伴把这片地区发给 MET Norway 查询预报，聊天模型只收到天气和温度。授权只用于你绑定的 QQ，关闭后会清除已保存的地区。', '同意并获取位置'],
     weatherOff: ['关闭当地天气？', '将清除账号已保存的地区，并停止提供当地天气。', '关闭并清除'],
-    outreach: ['允许伙伴主动找你？', '在你设定的等待时间后，伙伴可以参考最近的私聊，通过已绑定的 QQ 给你发一条消息。免打扰期间会等候。随时可以在这里撤销，也可以在 QQ 发「关闭问候」。', '允许主动联系'],
+    outreach: ['允许伙伴主动找你？', '伙伴可以按你选择的节奏，在已绑定的 QQ 主动发消息。免打扰期间会等候。随时可以在这里撤销，也可以在 QQ 发「关闭问候」。', '允许主动联系'],
     outreachOff: ['停止主动联系？', '伙伴会停止因长时间未回复而发起的消息。你仍可主动找她聊天。', '撤销授权'],
   };
   const [title, detail, action] = messages[kind];
@@ -1357,6 +1357,11 @@ function delayLabel(minutes) {
   if (minutes % 60 === 0) return `${minutes / 60} 小时`;
   return `${minutes} 分钟`;
 }
+function outreachSummary(rule) {
+  return rule.outreachMode === 'adaptive'
+    ? '智能联系会参考最近的话题。通常最多一条，明确还有下文时才可能再留一句。'
+    : '固定间隔为 ' + delayLabel(rule.afterMinutes) + '，每段沉默最多一条。';
+}
 function renderLogs(logs) {
   const root = $('logs');
   root.replaceChildren();
@@ -1406,7 +1411,12 @@ function renderTimeZone(savedZone) {
   select.replaceChildren(...Array.from(zones, ([value, label]) => new Option(label, value)));
   select.value = current;
 }
-function syncQuiet() {
+function syncGreetingForm() {
+  const manual = field('outreachMode').value === 'manual';
+  $('fixed-delay-row').hidden = !manual;
+  field('afterMinutes').disabled = !manual;
+  $('outreach-mode-help').textContent = manual ? '按你设定的时间问候，免打扰时段会顺延。'
+    : '聊到一半安静下来，伙伴会参考话题和你这几轮接话的速度。还没聊起来、已经道别或你在忙时，她会等你。';
   field('quietStart').disabled = !field('quietEnabled').checked;
   field('quietEnd').disabled = !field('quietEnabled').checked;
 }
@@ -1476,16 +1486,17 @@ function render(next) {
   badge('voice-status', voice || '待配置', voice ? 'success' : 'neutral');
   $('quick-greet').setAttribute('aria-checked', String(settings.enabled));
   $('quick-greet').disabled = false;
-  $('greet-summary').textContent = settings.enabled ? `${delayLabel(settings.afterMinutes)}未回复后问候` : '主动问候已暂停';
+  $('greet-summary').textContent = settings.enabled ? outreachSummary(settings) : '主动问候已暂停';
   $('opted-in').textContent = `已开启问候的 QQ 好友：${next.stats?.optedIn ?? 0}`;
   if (!dirty) {
     for (const name of Object.keys(fields)) {
       const input = field(name);
       if (name === 'timeZone') renderTimeZone(settings.timeZone);
+      else if (name === 'outreachMode') input.value = settings.outreachMode || 'manual';
       else if (input.type === 'checkbox') input.checked = settings[name];
       else input.value = settings[name];
     }
-    syncQuiet();
+    syncGreetingForm();
   }
   renderLogs(logs);
   if (previousRoute !== activeRoute()) navigate();
@@ -1560,7 +1571,7 @@ $('quick-greet').addEventListener('click', async (event) => {
   catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 });
-$('settings').addEventListener('input', () => { dirty = true; syncQuiet(); });
+$('settings').addEventListener('input', () => { dirty = true; syncGreetingForm(); });
 $('settings').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
@@ -1568,6 +1579,7 @@ $('settings').addEventListener('submit', async (event) => {
   const payload = {};
   for (const name of Object.keys(fields)) {
     const input = field(name);
+    if (name === 'afterMinutes' && input.disabled) continue;
     payload[name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? input.valueAsNumber : input.value;
   }
   try { const next = await request('/api/settings', 'PATCH', payload); dirty = false; render(next); toast(desktopPreview ? '预览设置已保存在本机' : '问候规则已保存'); }

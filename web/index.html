@@ -281,7 +281,7 @@
       <section class="card settings" aria-labelledby="outreach-title">
         <div class="setting-row"><div><h2 id="outreach-title">主动找我</h2><p>安静了一阵，伙伴可以接着你们上次聊过的事，主动在 QQ 给你发条消息。</p></div><span class="badge neutral" id="outreach-status">正在读取</span></div>
         <p id="outreach-note" class="plugin-note"></p>
-        <div class="plugin-buttons"><button class="button primary" id="outreach-toggle" disabled>授权主动联系</button><a class="link" href="#greetings">调整时间和免打扰</a></div>
+        <div class="plugin-buttons"><button class="button primary" id="outreach-toggle" disabled>授权主动联系</button><a class="link" href="#greetings">调整联系节奏和免打扰</a></div>
       </section>
       <p class="setup-feedback" id="care-feedback" role="status"></p>
       <dialog class="dialog" id="care-consent" aria-labelledby="care-title">
@@ -295,10 +295,11 @@
     </section>
 
     <section class="page subpage" id="greetings" hidden>
-      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-moon"/></svg> 问候设置</span><h1>问候的分寸，由你决定。</h1><p>超过设定时间后，小宇会参考你写的人设和最近聊过的话，发一句简短的 QQ 消息。</p></div>
+      <div class="page-intro"><span class="eyebrow"><svg><use href="#i-moon"/></svg> 问候设置</span><h1>主动联系</h1><p>选择伙伴什么时候可以在 QQ 找你。</p></div>
       <form class="card settings" id="settings">
-        <div class="setting-row"><div><h2>主动问候</h2><p>认领主人后，在 QQ 私聊发「开启问候」即可。</p></div><input type="checkbox" id="greet-enabled" name="enabled" class="switch-input" aria-label="启用主动问候"></div>
-        <div class="setting-row"><label for="delay"><strong>等待时间</strong><small>从对方上一条消息开始计时。每段沉默期最多问候一次。</small></label><div class="time-input"><input id="delay" name="afterMinutes" type="number" min="1" max="10080" required><span>分钟</span></div></div>
+        <div class="setting-row"><div><h2>主动问候</h2><p>在「陪伴插件」授权「主动找我」，或在已绑定的 QQ 私聊发「开启问候」。</p></div><input type="checkbox" id="greet-enabled" name="enabled" class="switch-input" aria-label="启用主动问候"></div>
+        <div class="setting-row time-zone-row"><label for="outreach-mode"><strong>联系节奏</strong><small id="outreach-mode-help">聊到一半安静下来，伙伴会参考话题和你这几轮接话的速度。还没聊起来、已经道别或你在忙时，她会等你。</small></label><select id="outreach-mode" name="outreachMode" aria-describedby="outreach-mode-help" aria-controls="fixed-delay-row"><option value="adaptive">智能联系</option><option value="manual">固定间隔</option></select></div>
+        <div id="fixed-delay-row" class="setting-row" hidden><label for="delay"><strong>等待时间</strong><small>从你上一条消息开始计时，每段沉默期最多问候一次。</small></label><div class="time-input"><input id="delay" name="afterMinutes" type="number" min="1" max="10080" disabled required><span>分钟</span></div></div>
         <div class="setting-row time-zone-row"><label for="chat-time-zone"><strong>对话时区</strong><small>夜聊和主动问候都按这个时区。</small></label><select id="chat-time-zone" name="timeZone"><option value="Asia/Shanghai">北京时间</option></select></div>
         <div class="setting-row"><label for="quiet-enabled"><strong>夜间免打扰</strong><small>你主动发消息时照常回复。到期的主动问候会等到免打扰结束。</small></label><input type="checkbox" id="quiet-enabled" name="quietEnabled" class="switch-input"></div>
         <div class="setting-row quiet-times"><div class="time-input"><label for="quiet-start">开始</label><input id="quiet-start" name="quietStart" type="time" required></div><span>—</span><div class="time-input"><label for="quiet-end">结束</label><input id="quiet-end" name="quietEnd" type="time" required></div></div>

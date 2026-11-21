@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createProviders } from './providers.mjs';
 import { replyToOwner } from './owner-chat.mjs';
-import { createWeather, setWeatherGrant, visibleSettings, weatherGrantFor, weatherInterest, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
+import { createWeather, setWeatherGrant, reportsCurrentWeather, weatherAnswer, weatherChatText, visibleSettings, weatherGrantFor, weatherInterest, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
 
 const hour = 3_600_000;
 const start = Date.UTC(2026, 10, 20, 8, 5);
@@ -56,6 +56,8 @@ test('only local questions and outdoor plans use location; bare greetings and na
   assert.equal((await read({}, '外面冷吗')).status, 'off');
   assert.equal(await read({}, '', { proactive: true }), null);
   assert.equal((await weather(saved, owner, '今天天气怎么样')).status, 'unavailable');
+  assert.equal(seen.length, 0);
+  assert.equal(await read(saved, '我还没讲完那个游戏里藏纸条的谜题', { proactive: true, topicOnly: true }), null);
   assert.equal(seen.length, 0);
   const [first, second] = await Promise.all([read(saved, '今天要带伞吗'), read(saved, '我准备出门')]);
   assert.equal(first.temperature, 4); assert.equal(second.requested, false);
@@ -127,4 +129,38 @@ test('owner weather questions use authorized forecasts in normal chat instead of
     assert.doesNotMatch(result.reply.text, /\d+℃|有雨/);
   }
   assert.equal(calls.length, 1);
+});
+
+
+test('a newly granted local forecast takes precedence over old permission replies and incorrect readings', async () => {
+  const current = { status: 'current', condition: '晴', temperature: -1, requested: true };
+  for (const candidate of ['现在还看不到呢，先帮我开一下位置。', '预报是 1℃。', '你那里是零下1度，大雪。', '大概零下1度，出去记得戴条围巾呀。']) {
+    const providers = createProviders({ AI_BASE_URL: 'https://model.example.test/v1', AI_MODEL: 'sample' }, {
+      fetchImpl: async () => Response.json({ choices: [{ message: { content: candidate } }] }),
+    });
+    const response = await replyToOwner({ providers, settings: {}, ownerName: '', at: start, weatherContext: current,
+      messages: [{ role: 'assistant', text: '之前还看不到天气。' }], text: '现在多少度？' });
+    if (candidate.includes('围巾')) assert.equal(response.reply.text, candidate);
+    else { assert.match(response.reply.text, /零下1度/); assert.doesNotMatch(response.reply.text, /授权|分享|地区|预报/); }
+  }
+});
+
+test('weather in chat keeps spoken temperatures and answers what the user asked', () => {
+  const current = { status: 'current', condition: '晴', temperature: 1, requested: true };
+  assert.equal(weatherChatText('按刚才那份预报，大约 3 度，有点凉。'), '大约3度，有点凉。');
+  assert.equal(weatherChatText('才一度呀，怪冷的。'), '才一度呀，怪冷的。');
+  assert.ok(reportsCurrentWeather('才一度呀，怪冷的。', current));
+  assert.ok(reportsCurrentWeather('就一度，雨伞倒是用不上。', current));
+  assert.ok(reportsCurrentWeather('这会儿没雨，伞可以不带啦。', current, '我需要带伞吗？'));
+  assert.equal(reportsCurrentWeather('这会儿没雨。', current, '这边几度？'), false);
+  assert.equal(reportsCurrentWeather('伞可以留家里。', { ...current, condition: '有雨' }, '要带伞吗？'), false);
+  assert.ok(reportsCurrentWeather('零下十二度，怪冷的呀。', { ...current, temperature: -12 }));
+  for (const line of ['你上次分享的地区，这个时段预报大约 1℃，晴。', '才零下一度。', '快下雪了，只有1度。',
+    '只有十一度。']) assert.equal(reportsCurrentWeather(line, current), false, line);
+  assert.equal(reportsCurrentWeather('一度，没下雨。', { ...current, condition: '有雨' }), false);
+  assert.match(weatherAnswer(current, '我这边现在几度？'), /1度/);
+  assert.match(weatherAnswer(current, '要带外套吗？'), /^外套/);
+  assert.match(weatherAnswer(current, '用不用带伞？'), /不用带伞/);
+  assert.match(weatherAnswer({ ...current, condition: '有雨' }, '要带伞吗？'), /^带把伞/);
+  assert.match(weatherAnswer({ ...current, condition: '' }, '要带伞吗？'), /说不准/);
 });

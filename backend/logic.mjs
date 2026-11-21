@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { followupMessages } from './followup.mjs';
 import { companionGreeting, companionTurnContext, validGreeting } from './companion.mjs';
 import { boundedChatContext, MAX_STORED_MESSAGES } from './history.mjs';
 import { dshPluginIDs, selectedPlugins } from './plugin-capabilities.mjs';
 import { localTimeContext, validTimeZone } from './time-context.mjs';
+import { defaultOutreachMinutes, outreachModeFor } from './outreach.mjs';
 
 export const defaultSettings = Object.freeze({
-  enabled: true, afterMinutes: 360, quietEnabled: true, quietStart: '23:00', quietEnd: '08:00',
+  enabled: true, outreachMode: 'adaptive', afterMinutes: defaultOutreachMinutes, quietEnabled: true, quietStart: '23:00', quietEnd: '08:00',
   timeZone: 'Asia/Shanghai', voiceReplies: false,
   companionName: '', companionPersona: '', memoryEnabled: true,
   dshPlugins: Object.freeze([]),
@@ -26,6 +28,7 @@ const validTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const validDshPlugins = new Set(dshPluginIDs);
 export function readSettings(current) {
   const settings = { ...defaultSettings, ...current };
+  settings.outreachMode = outreachModeFor(current);
   delete settings.companionStyle;
   settings.timeZone = validTimeZone(settings.timeZone) ? settings.timeZone : 'Asia/Shanghai';
   settings.dshPlugins = selectedPlugins(settings);
@@ -66,11 +69,17 @@ export function mergeSettings(current, input) {
     if (typeof input[key] !== 'boolean') throw new Error('开关值无效');
     next[key] = input[key];
   }
+  if ('outreachMode' in input) {
+    if (input.outreachMode !== 'adaptive' && input.outreachMode !== 'manual') throw new Error('请选择智能联系或固定间隔');
+    next.outreachMode = input.outreachMode;
+  }
   if ('afterMinutes' in input) {
     if (!Number.isInteger(input.afterMinutes) || input.afterMinutes < 1 || input.afterMinutes > 10080) {
       throw new Error('等待时间须在 1 分钟到 7 天之间');
     }
     next.afterMinutes = input.afterMinutes;
+    // Clients predating adaptive outreach only send a fixed wait time.
+    if (!('outreachMode' in input)) next.outreachMode = 'manual';
   }
   for (const key of ['quietStart', 'quietEnd']) {
     if (!(key in input)) continue;
@@ -149,11 +158,12 @@ export async function createReply(providers, settings, messages, text, { mode, v
 }
 
 export async function createGreeting(providers, settings, messages, options = {}) {
-  const { at = Date.now(), ownerName, idleMinutes, memoryContext, weatherContext } = typeof options === 'number' ? { at: options } : options;
+  const { at = Date.now(), ownerName, idleMinutes, memoryContext, weatherContext, followupPlan } = typeof options === 'number' ? { at: options } : options;
   const { companionName, companionPersona, memoryEnabled = true } = settings;
   const context = {
+    ...(followupPlan ? { followupPlan } : {}),
     ...(weatherContext ? { weatherContext } : {}),
-    messages: messages.slice(-8), companionName, companionPersona, idleMinutes,
+    messages: followupPlan ? followupMessages(messages, followupPlan, settings.timeZone, at) : messages.slice(-8), companionName, companionPersona, idleMinutes,
     ...(typeof ownerName === 'string' ? { ownerName } : {}),
     memoryContext: memoryEnabled && memoryContext ? { traits: memoryContext.traits, personality: memoryContext.personality } : undefined,
     timeContext: localTimeContext(at, settings.timeZone),

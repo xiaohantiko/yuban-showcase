@@ -168,6 +168,16 @@ function greetingMood({ messages = [], companionPersona = '', memoryContext } = 
 
 export function companionGreeting(context = {}) {
   const { messages = [], idleMinutes } = context;
+  const followup = context.followupPlan;
+  if (followup?.reason === 'open' && (followup.stage === 1 || followup.stage === 2)) {
+    const choices = followup.stage === 1
+      ? ['咦，人呢？刚才那段我还想听。', '刚才你还想说什么来着？我有点好奇。', '欸，刚才那段还有后半截呀？']
+      : ['刚才那段咱们留着，哪天想讲了再接着聊。', '给你留句话，希望你这会儿还顺心。有空咱们再聊。', '刚才那个话头先留着，咱们回头慢慢说。'];
+    const latest = messages.findLast(m => m.role === 'user')?.text ?? '';
+    const index = (Math.floor((followup.anchor || 0) / 60_000) + latest.length) % choices.length;
+    const previous = messages.findLast(m => m.kind === 'greeting')?.text;
+    return choices[index] === previous ? choices[(index + 1) % choices.length] : choices[index];
+  }
   const mood = greetingMood(context);
   const variants = {
     space: ['等你想聊了再说呀', '想说话的时候，再来找我就好'],
@@ -207,6 +217,10 @@ export function companionGreetingPrompt(options, context) {
     companionPrompt({ ...options, timeContext: context.timeContext, weatherContext: context.weatherContext }),
     '本次是在已允许的情况下发一条主动问候。像平时熟悉的两个人，你想去找对方聊两句。只输出一行简短的 QQ 口语，尽量 25 个字以内，不加引号、解释、标签或 Markdown。对方最近提过歌、零食、剧或别的轻松话题，可以接一个具体的小问题；可以从自己人设里的喜好发起一次分享，也可以单纯问这会儿在干嘛。给对方一个容易接的话头，一次只聊一件事。不要报到、发服务提醒或用「来打声招呼」「最近还好吗」作固定开场。',
     `服务器提供的空闲时长（分钟）：${idle ?? '未知'}。它只用来选择问候语气，别报时长、提到已读未回、断定对方在做什么或暗示自己一直等着。`,
+    ...(context.followupPlan ? [context.followupPlan.stage === 2
+      ? '上次已经留过一句。这次只留一句温和的陈述，给这段话题一个可以以后再接的落点。别再提问、猜想出事或要求报平安。'
+      : context.followupPlan.reason === 'open' ? '对方明确提到还有话没讲完。自然接住那个话头，一句就好；关系随意时可以偶尔轻声招呼，别总用「人呢」、别问为什么没回。'
+      : '刚才确实来回聊了几轮。可以从对方自己提的轻松话题接一句；别声称对方答应要回来。'] : []),
     ...(previous ? [`上一条主动问候仅用于避免重复：${JSON.stringify(previous)}`] : []),
     mood === 'affection'
       ? '角色明确有恋爱或暧昧设定，最近也有对方明确接受的亲昵互动，可以随口用一点想念，比如「你在干嘛呀，想你了」或「干嘛呢，刚刚想你了」。根据上下文自己说，别照抄每次都用。'
@@ -227,6 +241,8 @@ export function validGreeting(value, context = {}) {
   if (/你(?:这会儿|现在|今天)?(?:肯定|准是|一定|八成)(?:还|又)?(?:在|忙|睡|累|很难过)/u.test(text)) return null;
   if (context.weatherContext?.status !== 'current'
     && /(?:你那(?:儿|边|里)|你当地|你所在(?:的)?城市|外面|当地)[，、 ]{0,2}(?:现在|今天|这会儿|已经|好像)?(?:在?下[雨雪]|刮风|好[冷热]|降温|[零负\d-]+\s*(?:度|℃))/u.test(text)) return null;
+  if (context.followupPlan && /出(?:什么)?事|是不是.{0,5}(?:遇到麻烦|不安全|有危险)|失联|报(?:个)?平安|担心死了|急死了|你(?:去哪了|怎么消失)|回我(?:一声|一下|一句)/u.test(text)) return null;
+  if (context.followupPlan?.stage === 2 && /[？?]|人呢|在(?:不在|吗)|怎么(?:了|啦)|回(?:我|个话)|告诉我/u.test(text)) return null;
   const pressure = /已读不回|(?:怎么|为何|为什么).{0,6}(?:不回|不理)|还不回|不理我|这么久.{0,4}(?:没回|不回)|(?:快点?|赶紧|必须|一定要)回|一直.{0,4}(?:等着?你|盯着)|不回.{0,8}(?:我会|我就)|你欠我|别让我担心|why.{0,12}(?:not reply|not answering)|you owe me|reply now/iu;
   const offlineClaims = /我(?:刚刚?|今天|昨天)?(?:看到你|看见你|去过?你家|到过?你家|经过你家)|我(?:替|为|给)你(?:买|做)了/u;
   if (pressure.test(text) || offlineClaims.test(text)) return null;

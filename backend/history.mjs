@@ -15,9 +15,10 @@ function isMessage(message) {
 
 export function boundStoredHistory(messages) {
   if (!Array.isArray(messages)) return [];
-  return messages.slice(-MAX_STORED_MESSAGES).filter(isMessage).map(({ id, role, text, at, kind, voice, sources }) => ({
+  return messages.slice(-MAX_STORED_MESSAGES).filter(isMessage).map(({ id, role, text, at, kind, voice, sources, pendingDelivery }) => ({
     ...(typeof id === 'string' ? { id: clip(id, 80) } : {}),
     role, text: clip(text, MAX_STORED_TEXT),
+    ...(role === 'assistant' && pendingDelivery === true ? { pendingDelivery: true } : {}),
     ...(Number.isFinite(at) ? { at } : {}),
     ...(kind === 'greeting' || kind === 'search' ? { kind } : {}),
     ...(voice === true ? { voice } : {}),
