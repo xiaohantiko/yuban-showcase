@@ -204,7 +204,19 @@ internal sealed class MainForm : Form
                 else OpenExternal(uri);
             });
         };
-        core.PermissionRequested += (_, args) => args.State = CoreWebView2PermissionState.Deny;
+        core.PermissionRequested += (_, args) =>
+        {
+            var weatherPrompt = args.PermissionKind == CoreWebView2PermissionKind.Geolocation
+                && args.IsUserInitiated && IsCurrent(current)
+                && Uri.TryCreate(args.Uri, UriKind.Absolute, out var requester)
+                && ConsoleOrigin.Contains(current.Origin, requester)
+                && Uri.TryCreate(core.Source, UriKind.Absolute, out var page)
+                && ConsoleOrigin.Contains(current.Origin, page)
+                && (page.AbsolutePath == "/" || page.AbsolutePath == "/admin")
+                && page.Fragment == "#companionship";
+            args.State = weatherPrompt ? CoreWebView2PermissionState.Default : CoreWebView2PermissionState.Deny;
+            if (!weatherPrompt) args.SavesInProfile = false;
+        };
         core.DownloadStarting += (_, args) => args.Cancel = true;
         core.BasicAuthenticationRequested += (_, args) => args.Cancel = true;
         core.ServerCertificateErrorDetected += (_, args) => args.Action = CoreWebView2ServerCertificateErrorAction.Cancel;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createGreeting, createReply, defaultSettings, mergeSettings, readSettings } from './logic.mjs';
-import { companionGreeting, companionMemoryMessage, companionTurnContext } from './companion.mjs';
+import { createGreeting, createReply, defaultSettings, mergeSettings, nextGreeting, readSettings } from './logic.mjs';
+import { companionGreeting, companionMemoryMessage, companionTurnContext, validGreeting } from './companion.mjs';
 import { createProviders } from './providers.mjs';
 
 test('legacy style settings are discarded while the custom persona is preserved', () => {
@@ -172,6 +172,22 @@ test('fallback greetings vary with conversational context without repeating priv
   const paused = await createGreeting(providers, { ...defaultSettings, memoryEnabled: false }, [], { memoryContext: { personality: [{ context: 'casual', trait: 'playful' }] } });
   assert.equal(paused.text, '你这会儿在干嘛呀');
   assert.notEqual(paused.text, playful.text);
+});
+
+test('outreach can reopen a shared light topic and leaves this silence alone when asked for space', () => {
+  const messages = [{ role: 'user', text: '我想做一个新的歌单。' }];
+  const text = companionGreeting({ messages, idleMinutes: 92 });
+  assert.match(text, /歌/u);
+  assert.notEqual(companionGreeting({ messages: [...messages, { role: 'assistant', kind: 'greeting', text }] }), text);
+  for (const line of ['你那边现在下雨，出门记得拿伞哦。', '你一定还在工作。', '特地来跟你打个招呼。']) {
+    assert.equal(validGreeting(line, { messages }), null);
+  }
+  assert.ok(validGreeting('你这会儿在干嘛呀？', { messages }));
+  const thread = { lastUserAt: 1, messages: [{ role: 'user', text: '我需要静一会儿，等我主动找你。' }] };
+  const settings = { ...defaultSettings, quietEnabled: false, afterMinutes: 1 };
+  assert.equal(nextGreeting(thread, settings, 80_000), null);
+  thread.messages.push({ role: 'user', text: '我回来啦！' });
+  assert.equal(nextGreeting(thread, settings, 80_000), 80_000);
 });
 
 test('relay sends the configured persona and bounded memory as separate data without dropping conversation', async () => {

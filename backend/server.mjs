@@ -1,3 +1,4 @@
+import { createWeather, setWeatherGrant, visibleSettings, weatherGrantFor, weatherPermissionCurrent, weatherStatus } from './weather.mjs';
 import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -29,6 +30,7 @@ import { allowsChainChat, importPluginMemory, pluginCapabilities } from './plugi
 import { activationRevision, activationSnapshot, applyPluginActivation, assertBotEnabled, assertPluginEnabled,
   assertPluginSettingsPatch, botIsEnabled, migratePluginActivation, pluginActivationRoute, PluginActivationError } from './plugin-activation.mjs';
 import { dueStory, observeStory } from './story-turn.mjs';
+import { outreachRoute, outreachStatus, validateOutreach } from './outreach.mjs';
 
 const webRoot = new URL('../web/', import.meta.url);
 const defaultStateFile = fileURLToPath(new URL('../.data/state.json', import.meta.url));
@@ -153,7 +155,7 @@ export function createApp({ env = process.env, stateFile = env.YUBAN_STATE_FILE 
   return { server, tick: relay.tick };
 }
 
-function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = createDshRelay(env), adapters, clock,
+function createRelay({ env, stateFile, sharedWeather, providers: injectedProviders, dshRelay = createDshRelay(env), adapters, clock,
   fetchImpl: upstreamFetch = fetch }) {
   const file = resolve(stateFile);
   const { state, save: saveState } = openState(file);
@@ -163,6 +165,8 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     const signal = options.signal ? AbortSignal.any([options.signal, lifetime.signal]) : lifetime.signal;
     return upstreamFetch(input, { ...options, signal });
   };
+  const weather = sharedWeather ?? createWeather({ fetchImpl, clock });
+  const providerAvailable = env.YUBAN_MET_WEATHER_ENABLED === '1';
   let stopped = false;
   const save = () => { if (!stopped) saveState(); };
   const requireActive = () => { if (stopped) fail(403, '账号当前已禁用。'); };
@@ -270,12 +274,14 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
       return { configured: adapter.configured, verified: adapter.configured && verified, capabilities: adapter.capabilities };
     };
     return {
-      settings: state.settings,
+      settings: visibleSettings(state.settings),
       ...(username ? { account: { username, ...(account && { role: account.legacy ? 'admin' : 'member' }) } } : {}),
       ...(endpoints ? { endpoints } : {}),
       runtime: 'local',
       stats: { conversations: Number(Boolean(thread)), optedIn: Number(Boolean(thread?.optedIn)) },
       services: {
+        weather: weatherStatus(state.settings, owner, clock(), providerAvailable),
+        outreach: outreachStatus(owner, transports.qq.capabilities?.proactive, thread?.optedIn, state.settings),
         model: providers.modelConfigured ? 'configured' : 'demo',
         modelId: providers.modelId ?? null,
         aiApi: Boolean(aiToken),
@@ -293,8 +299,9 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     };
   }
   function markActivity(thread) { thread.lastUserAt = Math.max(clock(), (thread.lastUserAt ?? 0) + 1); }
-  async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false } = {}) {
-    if (stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
+  async function push(runtime, transport, target, message, { proactive = false, owner, balanceNotice = false, requiredWeatherGrant } = {}) {
+    const stillAllowed = () => !requiredWeatherGrant || weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock());
+    if (!stillAllowed() || stopped || !botIsEnabled(state.settings) || (owner && !sameBinding(owner))) return false;
     let audio;
     if (message.voice && !proactive) {
       try { audio = await runtime.providers.audio(message.text); } catch { /* Reply in text if voice generation fails. */ }
@@ -307,9 +314,14 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     if (!await transportCurrent(runtime, transport) || (owner && !sameBinding(owner))) return false;
     if (ticket && !await balanceMonitor.isCurrent(ticket)) ticket = null;
     if (owner && !sameBinding(owner)) return false;
+    if (proactive && owner) {
+      const thread = state.channels[channelKey(owner)];
+      if (!thread?.optedIn || thread.storyTurn || !state.settings.enabled || isQuiet(clock(), state.settings)) return false;
+    }
+    if (!stillAllowed()) return false;
     const text = renderForTransport(message);
     const delivery = transport === 'qq' ? await deliverReply({ adapter: runtime.transports.qq, target, message, text, audio, proactive,
-      notice: ticket?.text, isCurrent: async () => botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
+      notice: ticket?.text, isCurrent: async () => stillAllowed() && botIsEnabled(state.settings) && (!owner || sameBinding(owner)) && await transportCurrent(runtime, transport),
     }) : await runtime.transports[transport].send(target, { text, audio, proactive });
     if (delivery === null) return false;
     if (ticket) {
@@ -453,6 +465,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         const memoryCommand = !parsed[STORY_FLUSH] && handleMemoryCommand(thread.memory, text, memoryOptions);
         const pluginCommand = !parsed[STORY_FLUSH] && isDshCommand(parsed.text);
         let message;
+        let requiredWeatherGrant;
         let completion;
         if (pluginCommand) {
           // Save the event ID before calling an external plugin, which may have side effects.
@@ -492,10 +505,22 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
             return notice('好，那就先不讲了。想聊别的也可以。', 'reply', owner);
           }
           text = story.action === 'flush' ? story.text : (story.text ?? text).slice(0, 2000);
+          let weatherContext = await weather(settings, owner, text, { providerAvailable });
+          if (weatherContext?.status === 'current') {
+            requiredWeatherGrant = weatherGrantFor(settings, owner);
+            if (!sameBinding(owner) || !weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock())) {
+              requiredWeatherGrant = null;
+              weatherContext = weatherContext.requested ? { requested: true, status: 'unavailable' } : null;
+            }
+          }
           const turn = await replyToOwner({
-            providers, settings, messages: thread.messages, text, memory: thread.memory, timeState: thread.timeState, ownerName: owner.name, at: clock(),
+            providers, settings, weatherContext, messages: thread.messages, text, memory: thread.memory, timeState: thread.timeState, ownerName: owner.name, at: clock(),
             story: story.action === 'flush',
           });
+          if (requiredWeatherGrant && !weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock())) {
+            commit();
+            return;
+          }
           message = turn.reply;
           completion = turn.completion;
           thread.timeState = turn.timeState;
@@ -519,7 +544,7 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
             if (revision !== activationRevision(state.settings)) return;
             message = newMessage('assistant', allowsChainChat(state.settings, parsed.text) ? result?.text || '未能处理插件命令。' : removed);
           }
-          if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true })) return;
+          if (!await push(runtime, transport, parsed.target, message, { owner, balanceNotice: true, requiredWeatherGrant })) return;
           log(transport, kind, 'ok', pluginCommand ? '已返回插件处理结果' : '已发送对话回复');
         } catch (err) { log(transport, kind, 'error', transportError(err)); }
         return completion ? { completion, owner, key, thread } : null;
@@ -562,7 +587,11 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
     greetingInFlight.add(key);
     try {
       // Let new private messages run while the model writes a greeting; recheck the idle period before sending.
+      const weatherContext = await weather(settings, owner, thread.messages.findLast(m => m.role === 'user')?.text, { providerAvailable, proactive: true });
+      const requiredWeatherGrant = weatherContext?.status === 'current' ? weatherGrantFor(settings, owner) : null;
+      if (!sameBinding(owner) || state.settings !== settings || (requiredWeatherGrant && !weatherPermissionCurrent(state.settings, requiredWeatherGrant, owner, clock()))) return;
       const message = await createGreeting(runtime.providers, settings, thread.messages.slice(), {
+        weatherContext,
         at: time, idleMinutes: Math.floor((time - activity) / 60_000), ownerName: owner.name,
         memoryContext: memoryContextFor(thread.memory, { allowed: settings.memoryEnabled !== false, privateChat: true, includeNotes: false }),
       });
@@ -570,12 +599,12 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         if (!await transportCurrent(runtime, owner.transport) || !sameBinding(owner) || state.owner.name !== owner.name
           || state.channels[key] !== thread || state.settings !== settings || !thread.optedIn || thread.storyTurn) return;
         const after = clock();
-        if (after - activity >= 30 * DAY || nextGreeting(thread, settings, after) !== after) return;
+        if (thread.lastUserAt !== activity || after - activity >= 30 * DAY || nextGreeting(thread, settings, after) !== after) return;
         // A timed-out delivery may have succeeded remotely. Do not retry it automatically.
         thread.attemptedFor = activity;
         save();
         try {
-          if (!await push(runtime, owner.transport, target, message, { proactive: true, owner })) return;
+          if (!await push(runtime, owner.transport, target, message, { proactive: true, owner, requiredWeatherGrant })) return;
           log(owner.transport, 'greeting', 'ok', '已发送主动问候');
         } catch (err) {
           log(owner.transport, 'greeting', 'error', transportError(err));
@@ -754,7 +783,44 @@ function createRelay({ env, stateFile, providers: injectedProviders, dshRelay = 
         }
       }
       if (method === 'GET' && TYPES.has(path) && !path.startsWith('/login')) return await serveAsset(res, path);
+      if (method === 'POST' && path === '/api/plugins/weather') {
+        if (!ownerManagementIsSecure(req)) fail(403, '请通过 HTTPS 打开位置授权。');
+        if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+        const { data } = await readJSON(req);
+        const owner = currentOwner(await services());
+        requireActive();
+        const previous = state.settings;
+        try { state.settings = setWeatherGrant(previous, owner, data, clock(), providerAvailable); }
+        catch (error) { fail(error.status ?? 400, error.message); }
+        try { save(); } catch (error) { state.settings = previous; throw error; }
+        return send(res, 200, weatherStatus(state.settings, owner, clock(), providerAvailable));
+      }
       if (method === 'GET' && path === '/api/state') return send(res, 200, await snapshot(username, endpoints, account));
+      if (path === outreachRoute) {
+        if (!['GET', 'POST'].includes(method)) return send(res, 405, { error: '请使用 GET 或 POST 请求。' }, { Allow: 'GET, POST' });
+        const runtime = await services();
+        requireActive();
+        const owner = currentOwner(runtime);
+        const key = owner && channelKey(owner);
+        const status = () => outreachStatus(owner, runtime.transports.qq.capabilities?.proactive, state.channels[key]?.optedIn, state.settings);
+        if (method === 'POST') {
+          if (!ownerManagementIsSecure(req)) fail(403, '请通过 HTTPS 打开插件授权。');
+          if (!authToken && !account && !username) fail(403, '请先登录宇伴控制台。');
+          if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
+          const { data } = await readJSON(req);
+          try { validateOutreach(data, status()); } catch (error) { fail(error.status, error.message); }
+          await withThread(lockKey('qq', owner.scope, { type: 'c2c', id: owner.id }), async () => {
+            const latest = await setup.runtime();
+            requireActive();
+            if (!sameBinding(owner) || latest.qqVerifiedKey !== runtime.qqVerifiedKey) fail(409, 'QQ 绑定刚刚发生变化，请重新确认。');
+            const previous = state.channels[key];
+            if (Boolean(previous?.optedIn) === data.enabled) return;
+            state.channels[key] = { ...(previous ?? newThread()), optedIn: data.enabled };
+            try { save(); } catch (error) { if (previous) state.channels[key] = previous; else delete state.channels[key]; throw error; }
+          });
+        }
+        return send(res, 200, status());
+      }
       if (path === pluginActivationRoute) {
         if (!['GET', 'POST'].includes(method)) return send(res, 405, { error: '请使用 GET 或 POST 请求。' }, { Allow: 'GET, POST' });
         const runtime = await services();
@@ -875,8 +941,9 @@ export function createMultiApp({ env = process.env, stateFile = env.YUBAN_STATE_
   const legacyAccount = setupFile(`${file}.account.json`).load().account ?? null;
   const auth = createMultiConsoleAuth({ env, stateFile: file, clock, legacyAccount });
   const feedback = createFeedbackStore({ stateFile: file, clock });
+  const sharedWeather = createWeather({ fetchImpl, clock });
   const legacy = createRelay({
-    env: { ...env, YUBAN_CONSOLE_ACCOUNTS: '' }, stateFile: file, providers, dshRelay, adapters, clock, fetchImpl,
+    sharedWeather, env: { ...env, YUBAN_CONSOLE_ACCOUNTS: '' }, stateFile: file, providers, dshRelay, adapters, clock, fetchImpl,
   });
   const guests = new Map();
   function relayFor(account) {
@@ -885,7 +952,7 @@ export function createMultiApp({ env = process.env, stateFile = env.YUBAN_STATE_
       // Start with an empty environment so a new account cannot inherit service credentials.
       const key = createHmac('sha256', env.YUBAN_ADMIN_TOKEN).update(`yuban tenant setup v1\0${account.id}`).digest('hex');
       guests.set(account.id, createRelay({
-        env: { YUBAN_ADMIN_TOKEN: key },
+        sharedWeather, env: { YUBAN_ADMIN_TOKEN: key, YUBAN_MET_WEATHER_ENABLED: env.YUBAN_MET_WEATHER_ENABLED },
         stateFile: join(`${file}.tenants`, account.id, 'state.json'),
         providers, clock, fetchImpl,
       }));

@@ -100,6 +100,8 @@ export function isQuiet(at, settings) {
 
 export function nextGreeting(thread, settings, now = Date.now()) {
   if (!settings.enabled || !thread.lastUserAt || thread.attemptedFor === thread.lastUserAt) return null;
+  const lastUser = thread.messages?.findLast(({ role }) => role === 'user');
+  if (lastUser?.kind !== 'search' && /(?:^|[，。！；,;]\s*)(?:你|请)?(?:先|暂时|现在)?(?:(?:别|不要|不用)(?:再)?(?:打扰我|来找我|联系我)|等我(?:主动)?(?:来)?找你)(?:[啦了呀吧]|就好)?(?=$|[。！；，,;.!])/u.test(lastUser?.text ?? '')) return null;
   const at = Math.max(now, thread.lastUserAt + settings.afterMinutes * 60_000);
   if (!isQuiet(at, settings)) return at;
   const delay = (minuteOfDay(settings.quietEnd) - clockMinute(at, settings.timeZone) + 1440) % 1440;
@@ -115,14 +117,14 @@ export function nextGreeting(thread, settings, now = Date.now()) {
 
 export const searchRequest = /^(?:[\s/]*(?:查资料|查一下|帮我查(?:一下)?|搜索|搜一下|帮我搜|search)\s*[:：]?)/i;
 export const voiceRequest = /^(?:请|可以)?(?:用|发)?语音(?:回复|回答)?\s*[:：,，]?\s*/;
-export const commandOn = /^(?:\/|#)?\s*(?:开启问候|打开问候|启用问候)$/;
-export const commandOff = /^(?:\/|#)?\s*(?:关闭问候|停用问候|取消问候|停止问候)$/;
+export const commandOn = /^(?:\/|#)?\s*(?:开启|打开|启用)(?:问候|主动找我)$/;
+export const commandOff = /^(?:\/|#)?\s*(?:关闭|停用|取消|停止)(?:问候|主动找我)$/;
 
-export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName, timeContext, story = false } = {}) {
+export async function createReply(providers, settings, messages, text, { mode, voice, at = Date.now(), memoryContext, ownerName, timeContext, weatherContext, story = false } = {}) {
   const { companionName, companionPersona, memoryEnabled = true } = settings;
   const wantsVoice = voice || settings.voiceReplies || voiceRequest.test(text);
   const input = text.replace(voiceRequest, '').trim() || '可以陪我聊聊吗？';
-  const kind = mode === 'search' || searchRequest.test(input) ? 'search' : 'chat';
+  const kind = !weatherContext?.requested && (mode === 'search' || searchRequest.test(input)) ? 'search' : 'chat';
   const query = kind === 'search' ? (input.replace(searchRequest, '').trim() || input) : input;
   let result;
   try {
@@ -132,6 +134,7 @@ export async function createReply(providers, settings, messages, text, { mode, v
       ...(kind === 'chat' ? { turnContext: companionTurnContext(messages, query) } : {}),
       ...(story && kind === 'chat' ? { story: true } : {}),
       ...(timeContext ? { timeContext } : {}),
+      ...(weatherContext ? { weatherContext } : {}),
       ...(typeof ownerName === 'string' ? { ownerName } : {}),
       memoryContext: memoryEnabled ? memoryContext : undefined,
     });
@@ -146,9 +149,10 @@ export async function createReply(providers, settings, messages, text, { mode, v
 }
 
 export async function createGreeting(providers, settings, messages, options = {}) {
-  const { at = Date.now(), ownerName, idleMinutes, memoryContext } = typeof options === 'number' ? { at: options } : options;
+  const { at = Date.now(), ownerName, idleMinutes, memoryContext, weatherContext } = typeof options === 'number' ? { at: options } : options;
   const { companionName, companionPersona, memoryEnabled = true } = settings;
   const context = {
+    ...(weatherContext ? { weatherContext } : {}),
     messages: messages.slice(-8), companionName, companionPersona, idleMinutes,
     ...(typeof ownerName === 'string' ? { ownerName } : {}),
     memoryContext: memoryEnabled && memoryContext ? { traits: memoryContext.traits, personality: memoryContext.personality } : undefined,

@@ -1,4 +1,5 @@
 import { groundedReply } from './grounded-reply.mjs';
+import { weatherAnswer } from './weather.mjs';
 import { companionGreeting, companionGreetingPrompt, companionMemoryMessage, companionPrompt, companionTurnContext, demoCompanionReply, isBareGreeting, validGreeting } from './companion.mjs';
 import { chatCompletionBody } from './model-request.mjs';
 import { personalityTraits, validatePersonalityObservation } from './personality.mjs';
@@ -274,9 +275,11 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
     voiceAvailable: voiceConfigured || Boolean(localAudio),
     voiceProvider: voiceConfigured ? 'remote' : localAudio ? 'macos' : 'none',
 
-    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, story = false, strict = false }) {
+    async reply({ messages, mode, companionName, companionPersona, memoryContext, ownerName, turnContext, timeContext, weatherContext, story = false, strict = false }) {
       const input = messages.findLast((message) => message.role === 'user')?.text?.trim() ?? '';
-      const lookup = lookupText(input);
+      const localWeatherAnswer = !strict && weatherAnswer(weatherContext);
+      if (localWeatherAnswer && (!modelConfigured || weatherContext.status !== 'current')) return { text: localWeatherAnswer };
+      const lookup = localWeatherAnswer ? null : lookupText(input);
       if (mode === 'search' || (!strict && lookup !== null)) return research(lookup ?? input, strict);
       const displayName = companionName || name;
       if (!modelConfigured) {
@@ -293,7 +296,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       if (observations) history.unshift(observations);
       try {
         const system = companionPrompt({ name: displayName, persona: companionPersona, hasMemory: Boolean(observations), ownerName,
-          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, sourceMessages: selected, greetingOnly });
+          turnContext: turnContext ?? companionTurnContext(messages, input), timeContext, weatherContext, sourceMessages: selected, greetingOnly });
         const text = await complete(system, history);
         if (greetingOnly && greetingAssumesPast.test(text)) {
           return { text: demoCompanionReply(messages, displayName, ownerName, timeContext) };
@@ -302,6 +305,7 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
           ...(greetingOnly ? { fallback: () => demoCompanionReply(messages, displayName, ownerName, timeContext) } : {}) }) };
       } catch (error) {
         if (strict) throw error;
+        if (localWeatherAnswer) return { text: localWeatherAnswer };
         return { text: `模型暂时连不上，先用本地模式陪你聊。\n\n${demoCompanionReply(messages, displayName, ownerName, timeContext)}` };
       }
     },
@@ -351,8 +355,8 @@ export function createProviders(env = {}, { fetchImpl = fetch, localAudio, onUsa
       return { bytes, contentType, filename: `yuban-voice.${extension}` };
     },
 
-    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes, timeContext } = {}) {
-      const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext };
+    async greeting({ messages = [], companionName, companionPersona, ownerName, memoryContext, idleMinutes, timeContext, weatherContext } = {}) {
+      const context = { messages, companionPersona, idleMinutes, memoryContext, timeContext, weatherContext };
       if (modelConfigured) {
         const observations = companionMemoryMessage({ traits: memoryContext?.traits, personality: memoryContext?.personality });
         const selected = selectChatHistory(messages, 6, true);

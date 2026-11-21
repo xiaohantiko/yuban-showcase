@@ -125,3 +125,13 @@ dialog{max-width:min(520px,calc(100% - 32px));border:1px solid var(--line);borde
 .time-zone-row select { max-width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel, #fff); color: var(--ink); font: inherit; }
 
 .public-brand-mark { display: grid; place-items: center; width: 100%; height: 100%; background: #ebdef8; color: #493764; font-size: 2em; font-weight: 700; }
+
+#companionship .card + .card { margin-top: 18px; }
+.plugin-note, #care-detail, #weather-auto-label { color: var(--muted); line-height: 1.65; font-size: 14px; }
+.plugin-note { margin: 12px 0; }
+.plugin-note:last-child { padding-bottom: 14px; }
+.plugin-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 6px 0 16px; }
+#care-consent { width: min(440px, 90vw); padding: 24px; }
+#care-consent h2 { font-size: 21px; }
+#care-detail { margin: 12px 0; }
+#care-consent .plugin-buttons { justify-content: flex-end; padding: 16px 0 0; }

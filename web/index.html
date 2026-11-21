@@ -42,6 +42,7 @@
       <a href="/admin" id="admin-nav" data-route="admin" hidden><svg><use href="#i-shield"/></svg>管理后台</a>
       <a href="#overview" data-route="overview" aria-current="page"><svg><use href="#i-home"/></svg>开始使用</a>
       <a href="#persona" data-route="persona"><svg><use href="#i-heart"/></svg>人设与记忆</a>
+      <a href="#companionship" data-route="companionship"><svg><use href="#i-wave"/></svg>陪伴插件</a>
       <a href="#greetings" data-route="greetings"><svg><use href="#i-chat"/></svg>主动问候</a>
       <a href="#usage" data-route="usage"><svg><use href="#i-usage"/></svg>用量看板</a>
       <a href="#ai" data-route="ai"><svg><use href="#i-code"/></svg>高级接入</a>
@@ -267,6 +268,27 @@
           <div class="companion-actions"><span id="companion-note">保存后应用于下一条陪伴回复。</span><button type="submit" class="button primary" id="save-companion" disabled>保存人设与记忆设置</button></div>
         </section>
       </form>
+    </section>
+
+    <section class="page subpage" id="companionship" aria-labelledby="companionship-title" hidden>
+      <div class="page-intro"><h1 id="companionship-title">陪伴插件</h1><p>选择你愿意在 QQ 私聊里分享什么，以及什么时候可以来找你。</p></div>
+      <section class="card settings" aria-labelledby="weather-title">
+        <div class="setting-row"><div><h2 id="weather-title">当地天气</h2><p>你问「出门要带伞吗」，伙伴可以参考当地这一小时的预报和气温。</p></div><span class="badge neutral" id="weather-status">正在读取</span></div>
+        <p id="weather-note" class="plugin-note"></p>
+        <div class="plugin-buttons"><button class="button primary" id="weather-grant" disabled>授权使用当前位置</button><button class="button subtle" id="weather-off" hidden>关闭并清除地区</button></div>
+        <p class="plugin-note">预报来自 <a href="https://api.met.no/weatherapi/locationforecast/2.0/documentation" target="_blank" rel="noreferrer">MET Norway</a>，按当地时段提取并转述。<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></p>
+      </section>
+      <section class="card settings" aria-labelledby="outreach-title">
+        <div class="setting-row"><div><h2 id="outreach-title">主动找我</h2><p>安静了一阵，伙伴可以接着你们上次聊过的事，主动在 QQ 给你发条消息。</p></div><span class="badge neutral" id="outreach-status">正在读取</span></div>
+        <p id="outreach-note" class="plugin-note"></p>
+        <div class="plugin-buttons"><button class="button primary" id="outreach-toggle" disabled>授权主动联系</button><a class="link" href="#greetings">调整时间和免打扰</a></div>
+      </section>
+      <p class="setup-feedback" id="care-feedback" role="status"></p>
+      <dialog class="dialog" id="care-consent" aria-labelledby="care-title">
+        <h2 id="care-title"></h2><p id="care-detail"></p>
+        <label id="weather-auto-label" hidden><input id="weather-auto" type="checkbox"> 下次打开此设备的管理台时，允许更新地区</label>
+        <div class="plugin-buttons"><button class="button subtle" id="care-cancel">取消</button><button class="button primary" id="care-confirm">确认授权</button></div>
+      </dialog>
     </section>
 
     <section class="page subpage" id="greetings" hidden>

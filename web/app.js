@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const routes = { admin: '管理后台', overview: '开始使用', ai: '高级接入', persona: '人设与记忆', greetings: '主动问候', usage: '用量看板', help: '使用说明', activity: '运行记录', feedback: '问题反馈' };
+const routes = { admin: '管理后台', overview: '开始使用', ai: '高级接入', persona: '人设与记忆', companionship: '陪伴插件', greetings: '主动问候', usage: '用量看板', help: '使用说明', activity: '运行记录', feedback: '问题反馈' };
 const fields = { enabled: 'greet-enabled', afterMinutes: 'delay', timeZone: 'chat-time-zone', quietEnabled: 'quiet-enabled', quietStart: 'quiet-start', quietEnd: 'quiet-end', voiceReplies: 'voice-default' };
 const field = (name) => $(fields[name]);
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -800,6 +800,129 @@ async function saveImportedMemory() {
     }
   }
 }
+let careBusy = false;
+let pendingCare;
+let lastWeatherAttempt = 0;
+const weatherDeviceKey = 'yuban.weather.deviceGrant';
+
+function weatherDeviceGrant(weather) {
+  const account = accountUsername();
+  return account && weather?.binding ? JSON.stringify([account, weather.binding]) : '';
+}
+function hasDeviceGrant(weather) {
+  const grant = weatherDeviceGrant(weather);
+  try { return Boolean(grant) && localStorage.getItem(weatherDeviceKey) === grant; }
+  catch { return false; }
+}
+function saveDeviceGrant(weather, allow) {
+  try {
+    if (allow && weatherDeviceGrant(weather)) localStorage.setItem(weatherDeviceKey, weatherDeviceGrant(weather));
+    else localStorage.removeItem(weatherDeviceKey);
+  } catch { /* One-time location still works when storage is disabled. */ }
+}
+function renderCarePlugins() {
+  const weather = state?.services?.weather;
+  const outreach = state?.services?.outreach;
+  const activeWeather = weather?.enabled;
+  badge('weather-status', activeWeather ? (weather.needsRefresh ? '地区已过期' : '已授权') : '未开启', activeWeather && !weather.needsRefresh ? 'success' : 'neutral');
+  $('weather-grant').textContent = activeWeather ? '更新天气地区' : '授权使用当前位置';
+  $('weather-grant').disabled = careBusy || desktopPreview || !weather?.binding || !weather.providerAvailable;
+  $('weather-off').hidden = !activeWeather;
+  $('weather-off').disabled = careBusy;
+  $('weather-note').textContent = !weather || desktopPreview ? '连接支持陪伴插件的云端后可用。'
+    : !weather.providerAvailable ? '部署者尚未启用天气数据源。'
+    : !weather.binding ? '先在「开始使用」绑定你的 QQ，再授权地区。'
+    : activeWeather ? (weather.needsRefresh ? '上次分享已超过 24 小时，请更新地区后再使用天气。' : '上次分享地区：' + new Date(weather.updatedAt).toLocaleString('zh-CN') + '。去其他城市后可以在这里更新。')
+    : '由你选择是否分享此设备的大致地区，每次分享可使用 24 小时。';
+  badge('outreach-status', outreach?.enabled ? (outreach.paused ? '已授权 · 已暂停' : '已授权') : '未开启', outreach?.enabled && !outreach.paused ? 'success' : 'neutral');
+  $('outreach-toggle').textContent = outreach?.enabled ? '撤销主动联系授权' : '授权主动联系';
+  $('outreach-toggle').disabled = careBusy || desktopPreview || !outreach?.binding || (!outreach.enabled && !outreach.available);
+  $('outreach-note').textContent = !outreach || desktopPreview ? '连接支持陪伴插件的云端后可用。'
+    : !outreach.available ? '先完成 QQ 绑定并连接支持主动消息的机器人。'
+    : (outreach.paused ? '主动问候目前暂停。' : '') + '静默 ' + delayLabel(outreach.afterMinutes) + ' 后，每段沉默最多一条。'
+      + (outreach.quietEnabled ? '免打扰 ' + outreach.quietStart + ' 至 ' + outreach.quietEnd + '。' : '');
+}
+
+function openCareConsent(kind) {
+  const weather = state?.services?.weather;
+  const outreach = state?.services?.outreach;
+  const data = kind === 'weather' || kind === 'weatherOff' ? weather : outreach;
+  if (careBusy || !data?.binding) return;
+  pendingCare = { kind, data, account: accountUsername() };
+  const messages = {
+    weather: ['授权当地天气', '设备会先将位置取整到 0.1°。宇伴把这片地区发给 MET Norway 查询预报，聊天模型只收到天气和温度。授权只用于你绑定的 QQ，关闭后会清除已保存的地区。', '同意并获取位置'],
+    weatherOff: ['关闭当地天气？', '将清除账号已保存的地区，并停止提供当地天气。', '关闭并清除'],
+    outreach: ['允许伙伴主动找你？', '在你设定的等待时间后，伙伴可以参考最近的私聊，通过已绑定的 QQ 给你发一条消息。免打扰期间会等候。随时可以在这里撤销，也可以在 QQ 发「关闭问候」。', '允许主动联系'],
+    outreachOff: ['停止主动联系？', '伙伴会停止因长时间未回复而发起的消息。你仍可主动找她聊天。', '撤销授权'],
+  };
+  const [title, detail, action] = messages[kind];
+  $('care-title').textContent = title;
+  $('care-detail').textContent = detail;
+  $('care-confirm').textContent = action;
+  $('weather-auto-label').hidden = kind !== 'weather';
+  $('weather-auto').checked = hasDeviceGrant(weather);
+  $('care-consent').showModal();
+}
+function locateWeatherRegion() {
+  if (!window.isSecureContext || !navigator.geolocation) throw new Error('此设备暂不能定位。可在手机浏览器用 HTTPS 打开同一管理台，登录后授权。');
+  return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
+    ({coords}) => resolve({ latitude: Math.round(coords.latitude * 10) / 10, longitude: Math.round(coords.longitude * 10) / 10 }),
+    error => reject(new Error(error.code === 1 ? '未获得位置权限。你可以在系统设置中允许宇伴定位，或用手机浏览器登录同一账号授权。' : '暂时无法取得当前位置，请检查设备定位服务后重试。')),
+    { enableHighAccuracy: false, maximumAge: 300_000, timeout: 12_000 },
+  ));
+}
+async function applyCareConsent(choice, allowAuto = false, automatic = false) {
+  if (!choice || careBusy || redirectingToLogin) return;
+  const {kind, data, account} = choice;
+  const key = kind.startsWith('weather') ? 'weather' : 'outreach';
+  careBusy = true;
+  renderCarePlugins();
+  try {
+    let payload = { enabled: kind === key, binding: data.binding };
+    if (kind === 'weather') {
+      const region = await locateWeatherRegion();
+      if (redirectingToLogin || accountUsername() !== account || state.services.weather?.binding !== data.binding || (automatic && document.hidden)) return;
+      payload = { ...payload, ...region, consent: true, expectedUpdatedAt: data.updatedAt };
+    } else if (kind === 'weatherOff') payload = { enabled: false, binding: data.binding };
+    else if (kind === 'outreach') payload.consent = true;
+    const result = await request('/api/plugins/' + key, 'POST', payload);
+    if (redirectingToLogin || accountUsername() !== account) return;
+    state.services[key] = result;
+    if (key === 'weather') saveDeviceGrant(result, kind === 'weather' && allowAuto);
+    if (!automatic) feedback('care-feedback', kind === 'weather' ? '地区已更新，可以在 QQ 问当地天气。' : kind === 'weatherOff' ? '天气插件已关闭，已清除地区。' : kind === 'outreach' ? (result.paused ? '已授权。请在问候设置中恢复主动问候。' : '已允许伙伴主动联系。') : '已撤销主动联系授权。', 'success');
+  } catch (error) {
+    if (!automatic) feedback('care-feedback', error.message, 'error');
+    if (error.status === 409) void refresh();
+  } finally {
+    careBusy = false;
+    renderCarePlugins();
+  }
+}
+async function refreshAllowedWeather() {
+  const weather = state?.services?.weather;
+  if (!weather?.enabled || !weather.providerAvailable || !hasDeviceGrant(weather) || !navigator.permissions || document.hidden || careBusy || pendingCare || redirectingToLogin) return;
+  if (Date.now() - weather.updatedAt < 60 * 60_000 || Date.now() - lastWeatherAttempt < 60 * 60_000) return;
+  lastWeatherAttempt = Date.now();
+  const account = accountUsername();
+  try {
+    const permission = await navigator.permissions.query({name: 'geolocation'});
+    if (permission.state === 'granted' && !document.hidden && !pendingCare && hasDeviceGrant(weather) && state?.services?.weather?.updatedAt === weather.updatedAt && account === accountUsername()) {
+      await applyCareConsent({kind: 'weather', data: weather, account}, true, true);
+    }
+  } catch { /* Devices without a permission query can update from the plugin card. */ }
+}
+$('weather-grant').addEventListener('click', () => openCareConsent('weather'));
+$('weather-off').addEventListener('click', () => openCareConsent('weatherOff'));
+$('outreach-toggle').addEventListener('click', () => openCareConsent(state?.services?.outreach?.enabled ? 'outreachOff' : 'outreach'));
+$('care-cancel').addEventListener('click', () => $('care-consent').close());
+$('care-consent').addEventListener('close', () => { pendingCare = undefined; });
+$('care-confirm').addEventListener('click', () => {
+  const choice = pendingCare;
+  $('care-consent').close();
+  void applyCareConsent(choice, $('weather-auto').checked);
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshAllowedWeather(); });
+
 function activeRoute() {
   const key = location.hash.slice(1);
   if (key === 'overview-qq') return 'overview';
@@ -829,7 +952,7 @@ function navigate() {
   if (current !== 'usage') ++usageRequestId;
   if (current === 'admin') return void loadAdmin();
   if (current === 'usage') return void loadUsage();
-  if (!state || ['activity', 'ai', 'persona', 'overview'].includes(current)) void refresh();
+  if (!state || ['activity', 'ai', 'persona', 'overview', 'companionship'].includes(current)) void refresh();
 }
 async function request(path, method = 'GET', body) {
   if (macPreview) {
@@ -1282,6 +1405,8 @@ function render(next) {
   if (previousAccount && account !== previousAccount) return goToLogin();
   state = next;
   const { settings, services, logs } = next;
+  renderCarePlugins();
+  void refreshAllowedWeather();
   if (services.dsh?.activation) acceptPluginActivation(services.dsh.activation);
   const cloud = publicCloud();
   const admin = isAdmin(next);
