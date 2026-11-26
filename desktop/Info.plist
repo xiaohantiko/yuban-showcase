@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.18</string>
+    <string>0.1.19</string>
     <key>CFBundleVersion</key>
-    <string>19</string>
+    <string>20</string>
     <key>NSLocationUsageDescription</key>
     <string>在你授权当地天气后，宇伴使用此设备的大致地区，为已绑定的 QQ 提供天气和气温。</string>
     <key>LSApplicationCategoryType</key>

@@ -53,7 +53,7 @@
   </aside>
 
   <main class="main">
-    <header class="topbar"><div><span>工作台</span><i>/</i><strong id="breadcrumb">开始使用</strong></div><div class="topbar-tools"><span class="environment" id="environment"><span class="dot"></span>初版预览</span><span class="active-account" id="active-account" hidden></span><span class="badge neutral account-role" id="account-role" hidden>管理员</span><button class="button subtle" id="logout" type="button" hidden>退出登录</button></div></header>
+    <header class="topbar"><div><span>工作台</span><i>/</i><strong id="breadcrumb">开始使用</strong></div><div class="topbar-tools"><span class="environment" id="environment"><span class="dot"></span>正在加载</span><span class="active-account" id="active-account" hidden></span><span class="badge neutral account-role" id="account-role" hidden>管理员</span><button class="button subtle" id="logout" type="button" hidden>退出登录</button></div></header>
     <section class="page subpage" id="admin" aria-labelledby="admin-title" hidden>
       <div class="page-intro usage-intro">
         <h1 id="admin-title">管理后台</h1>
@@ -91,11 +91,11 @@
         <div class="section-title"><h2 id="connect-title">三步开始</h2><a class="link" href="#help">第一次用？看说明 <svg><use href="#i-chevron"/></svg></a></div>
         <div class="setup-list">
           <details class="card setup-step" id="step-cloud" open>
-            <summary><span class="step-number">1</span><span class="step-label"><strong>连接云端</strong><small>填入部署后拿到的宇伴网址</small></span><span class="badge neutral" id="step-cloud-status">还未连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
-            <div class="step-body"><p id="setup-cloud-note">你现在可以离线试用。想在 QQ 里使用，需要先连接云端。</p><div class="setup-actions"><button type="button" class="button primary" id="setup-connect" hidden>连接云端</button><a class="link" href="#help">我还没有云端网址</a></div></div>
+            <summary><span class="step-number">1</span><span class="step-label"><strong>连接云端</strong><small>填入部署后拿到的宇伴网址</small></span><span class="badge neutral" id="step-cloud-status">读取中</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <div class="step-body"><p id="setup-cloud-note" role="status">正在读取连接状态…</p><div class="setup-actions"><button type="button" class="button primary" id="setup-connect" hidden>连接云端</button><a class="link" id="setup-retry" href="">重新加载</a><a class="link" id="cloud-address-help" href="#help" hidden>我还没有云端网址</a></div></div>
           </details>
           <details class="card setup-step" id="step-model">
-            <summary><span class="step-number">2</span><span class="step-label"><strong>选一个 AI</strong><small>选择服务商，填入它的 API 密钥</small></span><span class="badge neutral" id="step-model-status">待连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <summary><span class="step-number">2</span><span class="step-label"><strong>选一个 AI</strong><small>选择服务商，填入它的 API 密钥</small></span><span class="badge neutral" id="step-model-status">读取中</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
             <div class="step-body"><p id="setup-model-note">连接云端后可以在这里验证并保存模型。</p>
               <form class="setup-form" id="setup-model-form" autocomplete="off">
                 <fieldset id="setup-model-fields" disabled>
@@ -120,7 +120,7 @@
             </div>
           </details>
           <details class="card setup-step" id="step-qq">
-            <summary><span class="step-number">3</span><span class="step-label"><strong>连接 QQ</strong><small>填机器人资料，再用你的 QQ 认领</small></span><span class="badge neutral" id="qq-status">待连接</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
+            <summary><span class="step-number">3</span><span class="step-label"><strong>连接 QQ</strong><small>填机器人资料，再用你的 QQ 认领</small></span><span class="badge neutral" id="qq-status">读取中</span><svg class="step-arrow"><use href="#i-chevron"/></svg></summary>
             <div class="step-body"><p id="setup-qq-note">在 QQ 开放平台创建机器人后，复制它的 AppID 和 ClientSecret。</p>
               <section class="plugin-activation" aria-labelledby="plugin-activation-title">
                 <div class="card-title"><h3 id="plugin-activation-title">先选好机器人能力</h3><span class="badge neutral" id="plugin-activation-status">正在读取…</span></div>

@@ -5,6 +5,7 @@ import { voiceDesignRoute, voiceDesignResponse, voiceSelectionRoute, voiceSelect
 import { deliverReply } from './chat-delivery.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { readFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +42,7 @@ const DAY = 86_400_000;
 const STORY_FLUSH = Symbol('story-flush');
 const OWNER_ROUTE = '/api/owner';
 const OWNER_CODE_ROUTE = `${OWNER_ROUTE}/code`;
+const compressedFiles = new Map();
 const LOGIN_ASSETS = new Set([
   '/login', '/login.js', '/login.css', '/styles.css',
   '/assets/altcha.js', '/assets/altcha.css', '/assets/altcha-worker.js', '/assets/altcha-zh.js', '/assets/altcha-license.txt',
@@ -114,14 +116,44 @@ function consoleOriginMatches(req, secure) {
   try { return req.headers.origin === new URL(`${secure ? 'https' : 'http'}://${req.headers.host}`).origin; }
   catch { return false; }
 }
-async function serveAsset(res, path) {
+function acceptsGzip(header = '') {
+  return header.toLowerCase().split(',').some(entry => {
+    const [name, parameter] = entry.trim().split(/\s*;\s*/);
+    if (name !== 'gzip') return false;
+    return parameter === undefined || Number(parameter.replace(/^q\s*=\s*/, '')) > 0;
+  });
+}
+async function serveAsset(req, res, path) {
   const [file, type] = TYPES.get(path);
   const body = await readFile(new URL(file, webRoot));
-  const cache = path === '/' || path === '/login' ? 'no-store' : 'no-cache';
+  const page = path === '/' || path === '/login';
+  const cache = page ? 'no-store' : 'private, no-cache';
   const headers = { 'Content-Type': type, 'Cache-Control': cache };
+  const compressible = type.startsWith('text/') && body.length >= 1024;
+  if (compressible) headers.Vary = 'Accept-Encoding';
+  const tag = '"' + createHash('sha256').update(body).digest('base64url') + '"';
+  if (!page) {
+    headers.ETag = 'W/' + tag;
+    const candidates = (req.headers['if-none-match'] || '').split(',').map(value => value.trim().replace(/^W\//, ''));
+    if (candidates.includes(tag) || candidates.includes('*')) {
+      res.writeHead(304, headers);
+      return res.end();
+    }
+  }
   if (file.startsWith('../node_modules/altcha/dist/')) headers.Link = '</assets/altcha-license.txt>; rel="license"';
+  let payload = body;
+  if (compressible && acceptsGzip(req.headers['accept-encoding'])) {
+    let compressed = compressedFiles.get(path);
+    if (compressed?.tag !== tag) {
+      compressed = { tag, bytes: gzipSync(body) };
+      compressedFiles.set(path, compressed);
+    }
+    headers['Content-Encoding'] = 'gzip';
+    payload = compressed.bytes;
+  }
+  headers['Content-Length'] = payload.length;
   res.writeHead(200, headers);
-  return res.end(body);
+  return res.end(payload);
 }
 async function sendAuthResponse(res, response) {
   res.writeHead(response.status, Object.fromEntries(response.headers));
@@ -751,7 +783,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
           clientKey: req.socket.remoteAddress ?? 'unknown',
         });
         if (authResponse) return await sendAuthResponse(res, authResponse);
-        if (method === 'GET' && LOGIN_ASSETS.has(path)) return await serveAsset(res, path);
+        if (method === 'GET' && LOGIN_ASSETS.has(path)) return await serveAsset(req, res, path);
         username = await consoleAuth.authenticate(headers, { secure });
         if (!username) return requireLogin(res, path, method);
         if (!['GET', 'HEAD'].includes(method) && !sameOrigin) fail(403, '不接受跨站请求');
@@ -850,7 +882,7 @@ function createRelay({ env, stateFile, sharedWeather, providers: injectedProvide
           throw err;
         }
       }
-      if (method === 'GET' && TYPES.has(path) && !path.startsWith('/login')) return await serveAsset(res, path);
+      if (method === 'GET' && TYPES.has(path) && !path.startsWith('/login')) return await serveAsset(req, res, path);
       if (method === 'POST' && path === '/api/plugins/weather') {
         if (!ownerManagementIsSecure(req)) fail(403, '请通过 HTTPS 打开位置授权。');
         if (!isJSONContentType(req.headers['content-type'])) fail(415, '需要 application/json');
@@ -1088,7 +1120,7 @@ export function createMultiApp({ env = process.env, stateFile = env.YUBAN_STATE_
         clientKey: typeof proxyIp === 'string' && isIP(proxyIp) ? proxyIp : req.socket.remoteAddress ?? 'unknown',
       });
       if (authResponse) return await sendAuthResponse(res, authResponse);
-      if (method === 'GET' && LOGIN_ASSETS.has(path)) return await serveAsset(res, path);
+      if (method === 'GET' && LOGIN_ASSETS.has(path)) return await serveAsset(req, res, path);
       if (!account || !auth.userEnabled(account.id)) return requireLogin(res, path, method);
       if (!['GET', 'HEAD'].includes(method) && !sameOrigin) fail(403, '不接受跨站请求');
       const managedUser = adminUserRoute.exec(path);
@@ -1106,7 +1138,7 @@ export function createMultiApp({ env = process.env, stateFile = env.YUBAN_STATE_
           if (!await auth.authenticate(headers, { secure })) return requireLogin(res, path, method);
           return send(res, 200, { user: setGuestDisabled(managedUser[1], data.disabled) });
         }
-        if (path === '/admin') return await serveAsset(res, '/');
+        if (path === '/admin') return await serveAsset(req, res, '/');
         if (path === '/api/admin/users') return send(res, 200, { users: auth.listUsers() });
         if (path === '/api/admin/feedback') {
           const offset = url.searchParams.get('offset') ?? '0';

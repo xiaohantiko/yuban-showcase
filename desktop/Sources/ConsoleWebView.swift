@@ -33,6 +33,13 @@ struct ConsoleDestination: Equatable {
     var entryURL: URL { origin.appendingPathComponent("login") }
     var statusURL: URL { origin.appendingPathComponent("api/auth/status") }
 
+    func connectionFailure(_ error: Error) -> String {
+        if let probe = error as? ConsoleProbeError { return probe.localizedDescription }
+        return ConsoleDirectSettings.originIPv4(for: self) == nil
+            ? "请检查云端地址、网络和 HTTPS 证书，然后重试。"
+            : "此 Mac 无法直连管理台。请检查 Wi-Fi 或有线网络，以及「云端连接」里保存的服务器 IPv4 地址。"
+    }
+
     func contains(_ url: URL) -> Bool {
         url.scheme?.lowercased() == "https"
             && url.host?.lowercased() == origin.host?.lowercased()
@@ -134,9 +141,10 @@ struct ConsoleWebView: NSViewRepresentable {
     private static let loginHandler = "yubanLoginCredential"
     let destination: ConsoleDestination
     let transport: ConsoleTransport
+    let didOpenPage: () -> Void
     let reportFailure: (String) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(destination, reportFailure: reportFailure) }
+    func makeCoordinator() -> Coordinator { Coordinator(destination, didOpenPage: didOpenPage, reportFailure: reportFailure) }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -148,6 +156,7 @@ struct ConsoleWebView: NSViewRepresentable {
         context.coordinator.webView = webView
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
+        context.coordinator.startAccountCheck(transport)
         webView.load(URLRequest(url: destination.entryURL))
         return webView
     }
@@ -156,6 +165,7 @@ struct ConsoleWebView: NSViewRepresentable {
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         coordinator.active = false
+        coordinator.accountCheck?.cancel()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: loginHandler, contentWorld: .page)
         webView.stopLoading()
         webView.navigationDelegate = nil
@@ -165,15 +175,32 @@ struct ConsoleWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
         private let destination: ConsoleDestination
+        private let didOpenPage: () -> Void
         private let reportFailure: (String) -> Void
+        fileprivate var accountCheck: Task<Bool, Never>?
         private var acceptedLoginResponse = false
         private var loginDocument: UUID?
         weak var webView: WKWebView?
         var active = true
 
-        init(_ destination: ConsoleDestination, reportFailure: @escaping (String) -> Void) {
+        init(_ destination: ConsoleDestination, didOpenPage: @escaping () -> Void, reportFailure: @escaping (String) -> Void) {
             self.destination = destination
+            self.didOpenPage = didOpenPage
             self.reportFailure = reportFailure
+        }
+
+        // Fetch the login document and verify account mode in parallel. WebKit
+        // cannot commit a document or run its scripts until verification passes.
+        func startAccountCheck(_ transport: ConsoleTransport) {
+            accountCheck = Task { [weak self, destination] in
+                do {
+                    try await ConsoleProbe.verify(destination, transport: transport)
+                    return !Task.isCancelled
+                } catch {
+                    if !Task.isCancelled, let self, self.active { self.reportFailure(destination.connectionFailure(error)) }
+                    return false
+                }
+            }
         }
 
         private func permitsCredentialMessage(_ message: WKScriptMessage, in controller: WKUserContentController) -> Bool {
@@ -280,22 +307,21 @@ struct ConsoleWebView: NSViewRepresentable {
             NSWorkspace.shared.open(url)
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
-                     decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
             guard active, let url = navigationResponse.response.url, destination.contains(url) else {
-                return decisionHandler(.cancel)
+                return .cancel
             }
             if navigationResponse.isForMainFrame {
+                guard await accountCheck?.value == true, active else { return .cancel }
                 let response = navigationResponse.response as? HTTPURLResponse
                 acceptedLoginResponse = destination.isLoginDocument(url) && response?.mimeType == "text/html"
                     && response.map { (200..<300).contains($0.statusCode) } == true
                 if let response, response.statusCode >= 400 {
-                    decisionHandler(.cancel)
                     reportFailure("管理台返回 HTTP \(response.statusCode)。请确认部署状态和连接地址。")
-                    return
+                    return .cancel
                 }
             }
-            decisionHandler(.allow)
+            return .allow
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -306,6 +332,7 @@ struct ConsoleWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             loginDocument = active && acceptedLoginResponse ? UUID() : nil
             acceptedLoginResponse = false
+            if active { didOpenPage() }
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

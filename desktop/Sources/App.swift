@@ -28,6 +28,7 @@ private struct ConsoleWindow: View {
     @ViewState private var connection = ConnectionState.checking
     @ViewState private var connectionAttempt = UUID()
     @ViewState private var showsConnection = false
+    @ViewState private var openedPage = false
 
     private var connectionAddress: String {
         if !savedOrigin.isEmpty { return savedOrigin }
@@ -48,9 +49,16 @@ private struct ConsoleWindow: View {
                     Text("正在检查云端账号服务…").foregroundStyle(.secondary)
                 }
             case .connected(let destination, let transport):
-                ConsoleWebView(destination: destination, transport: transport) { message in
+                ConsoleWebView(destination: destination, transport: transport, didOpenPage: { openedPage = true }) { message in
                     if case .connected(let current, _) = connection, current == destination {
                         connection = .failed(message)
+                    }
+                }
+                .overlay {
+                    if !openedPage {
+                        ProgressView("正在打开宇伴…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color(nsColor: .windowBackgroundColor))
                     }
                 }
             case .failed(let message):
@@ -100,17 +108,13 @@ private struct ConsoleWindow: View {
             return
         }
         connection = .checking
+        openedPage = false
         do {
             let transport = try await ConsoleTransport.prepare(for: destination)
-            try await ConsoleProbe.verify(destination, transport: transport)
             if !Task.isCancelled, connectionAttempt == attempt { connection = .connected(destination, transport) }
         } catch {
             guard !Task.isCancelled, connectionAttempt == attempt else { return }
-            let hint = ConsoleDirectSettings.originIPv4(for: destination) == nil
-                ? "请检查云端地址、网络和 HTTPS 证书，然后重试。"
-                : "此 Mac 无法直连管理台。请检查 Wi-Fi 或有线网络，以及「云端连接」里保存的服务器 IPv4 地址。"
-            let message = (error as? ConsoleProbeError)?.localizedDescription ?? hint
-            connection = .failed(message)
+            connection = .failed(destination.connectionFailure(error))
         }
     }
 

@@ -18,6 +18,7 @@ const macPreview = location.protocol === 'yuban-preview:';
 const desktopPreview = macPreview || location.origin === 'https://yuban-preview.invalid';
 const legacyEndpoints = { qqWebhook: '/api/qq/webhook', aiReply: '/api/ai/reply', gptSchema: '/api/gpt/openapi.json' };
 let state;
+let initialStateRequest;
 let dirty = false;
 let deepseekVoiceEdited = false;
 let companionDirty = false;
@@ -618,6 +619,8 @@ function renderSetup() {
   const onebotConfigured = Boolean(state?.services.onebot?.configured);
   const ownerReady = ownerSnapshot?.bound && (ownerSnapshot.owner?.transport === 'onebot' ? onebotConfigured : qqVerified);
   badge('step-cloud-status', cloud ? '已连接' : '未连接', cloud ? 'success' : 'neutral');
+  $('setup-retry')?.toggleAttribute('hidden', true);
+  $('cloud-address-help')?.toggleAttribute('hidden', cloud);
   badge('step-model-status', model?.needsRecovery ? '需重新填写' : modelConfigured ? '已就绪' : cloud ? '待填写' : '待连接', modelConfigured ? 'success' : 'neutral');
   badge('qq-status', ownerReady ? '已就绪' : qq?.needsRecovery ? '需重新填写' : qqVerified || onebotConfigured ? '待认领' : qqConfigured ? '待填写回调' : cloud ? '待填写' : '待连接', ownerReady ? 'success' : 'neutral');
   $('setup-cloud-note').textContent = cloud ? '已连接到宇伴云端。接下来选一个 AI。' : '你现在可以离线试用。想在 QQ 里使用，需要先连接云端。';
@@ -1093,7 +1096,8 @@ async function request(path, method = 'GET', body, controller = new AbortControl
     return await bridge.postMessage({ path, method, ...(body !== undefined ? { body } : {}) });
   }
   const voicePreview = path === '/api/voice/design-preview';
-  const timeout = setTimeout(() => controller.abort(), voicePreview ? 240_000 : 25_000);
+  const initializing = path === '/api/state' && !state;
+  const timeout = setTimeout(() => controller.abort(), voicePreview ? 240_000 : initializing ? 12_000 : 25_000);
   const headers = new Headers();
   const username = accountUsername();
   if (body !== undefined) headers.set('Content-Type', 'application/json');
@@ -1127,6 +1131,11 @@ async function request(path, method = 'GET', body, controller = new AbortControl
     if (!result) throw new Error('暂时无法读取服务状态');
     return result;
   } finally { clearTimeout(timeout); }
+}
+function readState() {
+  if (state) return request('/api/state');
+  initialStateRequest ??= request('/api/state').finally(() => { initialStateRequest = undefined; });
+  return initialStateRequest;
 }
 function goToLogin() {
   if (redirectingToLogin) return;
@@ -1260,7 +1269,7 @@ async function loadAdmin() {
   showDashboardStatus('admin-status', '正在读取管理状态…');
   try {
     if (!state) {
-      const initial = await request('/api/state');
+      const initial = await readState();
       if (!current()) return;
       render(initial);
     }
@@ -1277,7 +1286,9 @@ async function loadAdmin() {
       loadAdminFeedback(adminFeedbackPage.offset),
     ]);
   } catch (error) {
-    if (current()) showDashboardStatus('admin-status', error.status === 403
+    if (!current()) return;
+    showInitialConnectionError();
+    showDashboardStatus('admin-status', error.status === 403
       ? '当前账号无法打开管理后台。' : '暂时无法读取管理状态，请重试。', 'error');
   } finally {
     if (current()) $('admin-refresh').disabled = false;
@@ -1457,7 +1468,7 @@ async function loadUsage(refreshBalance = false) {
   showDashboardStatus('usage-status', '正在读取用量…');
   try {
     if (!state) {
-      const initial = await request('/api/state');
+      const initial = await readState();
       if (!stillCurrent()) return;
       render(initial);
     }
@@ -1475,6 +1486,7 @@ async function loadUsage(refreshBalance = false) {
     }
   } catch (error) {
     if (!stillCurrent()) return;
+    showInitialConnectionError();
     if ([404, 405, 501].includes(error.status)) showDashboardStatus('usage-status', '此部署尚未提供用量看板。');
     else showDashboardStatus('usage-status', '暂时无法读取用量，请重试。', 'error');
   } finally {
@@ -1661,19 +1673,27 @@ function render(next) {
   renderLogs(logs);
   if (previousRoute !== activeRoute()) navigate();
 }
+function showInitialConnectionError() {
+  if (state || redirectingToLogin) return;
+  $('environment').lastChild.textContent = '连接中断';
+  badge('step-cloud-status', '加载失败');
+  badge('step-model-status', '未读取');
+  badge('qq-status', '未读取');
+  $('setup-cloud-note').textContent = '暂时读不到连接状态，请重新加载。';
+  $('setup-retry')?.toggleAttribute('hidden', false);
+  badge('ai-model-status', '待连接');
+  badge('ai-api-status', '待连接');
+}
 async function refresh(show = false) {
   try {
-    render(await request('/api/state'));
+    render(await readState());
     if (!state?.services?.dsh?.activation) void loadPluginActivation();
     if (activeRoute() === 'overview') void loadSetup();
     if (show) toast('运行记录已刷新');
   }
   catch (err) {
     $('health-text').textContent = '暂时无法连接中转服务';
-    if (!state) {
-      badge('ai-model-status', '待连接');
-      badge('ai-api-status', '待连接');
-    }
+    showInitialConnectionError();
     if (show) toast(err.message);
   }
 }
@@ -1766,6 +1786,14 @@ $('check').addEventListener('click', async (event) => {
   finally { button.disabled = false; }
 });
 $('refresh').addEventListener('click', () => refresh(true));
+$('setup-retry')?.addEventListener('click', event => {
+  if (state) return;
+  event.preventDefault();
+  if (redirectingToLogin || initialStateRequest) return;
+  $('setup-cloud-note').textContent = '正在重新读取连接状态…';
+  badge('step-cloud-status', '读取中');
+  void refresh();
+});
 $('setup-connect').addEventListener('click', async () => {
   try { await request('/app/cloud-connection', 'POST'); } catch (err) { toast(err.message); }
 });
